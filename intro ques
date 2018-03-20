@@ -1,0 +1,31 @@
+List employees (names) who have a bigger salary than their boss
+SELECT e.name AS 'Employee Name', e2.name AS 'Boss', 
+e.salary AS 'Employee salary', e2.salary AS 'Boss salary'
+FROM employees e
+JOIN employees e2 ON e.boss_id = e2.employee_id
+WHERE e2.salary < e.salary;
+List employees who have the biggest salary IN their departments
+SELECT d.name as department, e.name as max_earner, MAX(e.salary) as salary
+FROM employees e
+JOIN departments d ON e.department_id=d.id
+GROUP BY e.department_id;
+List departments that have less than 3 people IN it
+SELECT d.Name AS 'Department'
+FROM departments d JOIN employees e 
+ON e.department_id = d.Department_id
+GROUP BY d.department_id
+HAVING COUNT(e.employee_id) < 3
+List ALL departments along WITH the NUMBER OF people there (tricky - people often do an "inner join" leaving OUT empty departments)
+SELECT d.name, COUNT(e.department_id) AS num_employees
+FROM departments d LEFT JOIN employees e ON d.id=e.department_id
+GROUP BY d.id
+List employees that don't have a boss in the same department
+SELECT e.name 
+FROM employees e JOIN employees b ON e.boss_id=b.id
+WHERE e.department_id != b.department_id
+OR b.boss_id is NULL
+List all departments along with the total salary there
+SELECT d.name AS 'Department', SUM(e.salary) AS 'Total Salary'
+FROM departments d LEFT OUTER JOIN employees e 
+ON d.department_id = e.department_id
+GROUP BY d.department_id
