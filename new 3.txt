@@ -1,0 +1,43 @@
+The DBMS_PROFILER package provides an interface to profile existing PL/SQL applications and identify performance bottlenecks. You can then collect and persistently store the PL/SQL profiler data.
+The profiling information is stored in database tables. This enables querying on the data: you can build customizable reports (summary reports, hottest lines, code coverage data, and so on. And you can analyze the data.
+
+The PROFTAB.SQL script creates tables with the columns, datatypes,
+columns like->runid,run_total_time,run_owner,
+cost in explain plan:Cost is the estimated amount of work the plan will do. 
+
+A higher cardinality => you're going to fetch more rows => you're going to do more work => the query will take longer. Thus the cost is (usually) higher. 
+
+All other things being equal, a query with a higher cost will use more resources and thus take longer to run. But all things rarely are equal. A lower cost query can run faster than a higher cost one! 
+he cost is useful for figuring out why the optimizer chose (e.g.) a full table scan over an index. But in most cases ignore it. 
+
+A better question to ask is: 
+
+"Is the (estimated) cardinality roughly equal to the actual number of rows the statement processed?" 
+
+If the answer is yes for all steps of the plan, it's likely you have the "best" plan for your query. 
+
+To figure this out, you need the execution plan. This shows you the number of rows processed. For instructions on how to create these, see: 
+
+Difference between Sort Merge and Hash Joins
+What is the difference between "Sort Merge" and "Hash" Joins. Don't they both do a one FULL scan each on the joining tables and join them? 
+
+I know Sort Merge is used in the case of "ALL ROWS" and Nested Loops in the case of "FIRST ROWS" hints. How about Has Join? When is it used? 
+
+Nested Loops Joins
+Nested loops join an outer data set to an inner data set. For each row in the outer data set that matches the single-table predicates, the database retrieves all rows in the inner data set that satisfy the join predicate. If an index is available, then the database can use it to access the inner data set by rowid.
+When the Optimizer Considers Nested Loops Joins
+Nested loops joins are useful when the database joins small subsets of data, the database joins large sets of data with the optimizer mode set to FIRST_ROWS, or the join condition is an efficient method of accessing the inner table.
+
+Hash Joins
+The database uses a hash join to join larger data sets.
+
+The optimizer uses the smaller of two data sets to build a hash table on the join key in memory, using a deterministic hash function to specify the location in the hash table in which to store each row. The database then scans the larger data set, probing the hash table to find the rows that meet the join condition.
+When the Optimizer Considers Hash Joins
+In general, the optimizer considers a hash join when a relatively large amount of data must be joined (or a large percentage of a small table must be joined), and the join is an equijoin
+How Hash Joins Work
+A hashing algorithm takes a set of inputs and applies a deterministic hash function to generate a hash value between 1 and n, where n is the size of the hash table.
+
+A sort merge join is a variation on a nested loops join.
+
+If the two data sets in the join are not already sorted, then the database sorts them. These are the SORT JOIN operations. For each row in the first data set, the database probes the second data set for matching rows and joins them, basing its start position on the match made in the previous iteration. This is the MERGE JOIN operation.
+
