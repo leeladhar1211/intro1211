@@ -1,0 +1,282 @@
+http://select-star-from.blogspot.in/2013/07/oracle-dba-interview-questions-answers.html
+---difference b/w where and having clause
+1. WHERE clause specifies search conditions for the rows returned by the Query and limits rows to a meaningful set.
+
+2. GROUP BY clause works on the rows returned by the previous step #1. This clause summaries identical rows into a single/distinct group and returns a single row with the summary for each group, by using appropriate Aggregate function in the SELECT list, like COUNT(), SUM(), MIN(), MAX(), AVG(), etc.
+
+3. HAVING clause works as a Filter on top of the Grouped rows returned by the previous step #2. This clause cannot be replaced by a WHERE clause and vice-versa.
+
+example:  SELECT CustomerID, COUNT(*) AS OrderNos
+FROM [Sales].[SalesOrderHeader]
+WHERE OrderDate >= '2014-01-01 00:00:00.000'
+AND OrderDate < '2015-01-01 00:00:00.000'
+GROUP BY CustomerID
+
+---execute vs sp_execute
+
+Benefits of sp_ExecuteSQL
+As we have discussed above sp_ExecuteSQL allows parametrization of the T-SQL string and so it’s better to use it over EXEC to avoid SQL injection. Another benefit of using sp_ExecuteSQL is the reuse of execution plan if only change is in parameter values. It’s better to use sp_ExecuteSQL also because we don’t need to type cast the parameter values in string too.
+
+–> EXECUTE:
+As per MS BOL EXECUTE executes a command string or character string within a TSQL batch, or one of the following modules: system stored procedure, user-defined stored procedure, scalar-valued user-defined function, or extended stored procedure. The TSQL query can be a direct string or a variable of char, varchar, nchar, or nvarchar data type.
+
+–> sp_executesql:
+As per MS BOL sp_executesql executes a TSQL statement or batch that can be reused many times, or one that has been built dynamically. The TSQL statement or batch can contain embedded parameters. The SQL query is a Unicode string or a Unicode variable that contains a Transact-SQL statement or batch. Here the variable datatype is restricted to Unicode nchar or nvarchar only. If a Unicode constant (SQL string) is used then the it must be prefixed with N.
+
+–> Main difference performance wise: sp_executesql is generally preferred over EXEC() when executing dynamic T-SQL. sp_executesql works by creating a stored procedure using the specified query, then calling it using the supplied parameters. Unlike EXEC(), sp_executesql provides a mechanism that allows you to parameterize dynamic T-SQL and encourage plan reuse. A dynamic query that is executed using sp_executesql has a much better chance of avoiding unnecessary compilation and resource costs than one ran using EXEC().
+
+--SQL Injection
+SQL injection is an attack in which malicious code is inserted into strings that are later passed to an instance of SQL Server for parsing and execution. Any procedure that constructs SQL statements should be reviewed for injection vulnerabilities because SQL Server will execute all syntactically valid queries that it receives. Even parameterized data can be manipulated by a skilled and determined attacker.
+
+--difference between function and procedure
+–> Stored Procedures (SP):
+– Can be used to read and modify data.
+– To run an SP Execute or Exec is used, cannot be used with SELECT statement.
+– Cannot JOIN a SP in a SELECT statement.
+– Can use Table Variables as well as Temporary Tables inside an SP.
+– Can create and use Dynamic SQL.
+– Can use transactions inside (BEGIN TRANSACTION, COMMIT, ROLLBACK) an SP.
+– Can use used with XML FOR clause.
+– Can use a UDF inside a SP in SELECT statement.
+– Cannot be used to create constraints while creating a table.
+– Can execute all kinds of functions, be it deterministic or non-deterministic.
+ 
+
+–> Functions (UDF):
+– Can only read data, cannot modify the database.
+– Can only be used with SELECT statement, JOINS & APPLY (CROSS & OUTER).
+– Can JOIN a UDF in a SELECT statement.
+– Cannot use a Temporary Table, only Table Variables can be used.
+– Cannot use a Dynamic SQL inside a UDF.
+– Cannot use transactions inside a UDF.
+– Cannot be used with XML FOR clause.
+– Cannot execute an SP inside a UDF.
+– Can be used to create Constraints while creating a table.
+– Cannot execute some non-deterministic built-in functions, like GETDATE().
+
+Function VS Procedure
+- Functions are typically used to return table variables. Stored procedures cant return table variables however, can create tables.
+- A procedure may or may not return multiple values. A function cannot return more than one value and has to return at least one value.
+- A function can only have IN parameters while stored procedures can have IN, OUT and INOUT parameters.
+Function VS Procedure
+- A FUNCTION always returns a value using the return statement while a PROCEDURE may return one or more values through parameters or may not return at all.
+- Functions can be used in select or update or delete statement while procedure can't.'
+- Functions are normally used for computations where as procedures are normally used for executing business logic.
+- Stored procedure is precompiled execution plan where as functions are not.
+
+Independent execution
+
+A function doesn’t execute independently. It has to be a part of the executable statement.
+Inside an SQL query (E.g. Select function_name(parameters) from dual)
+Using assignment variables (E.g. var := function_name(parameters); )
+
+A procedure itself represents an executable statement, so it can run independently.
+Using Execute command ( E.g. Execute procedure_name(parameters); )
+Calling procedures (E.g. procedure_name(parameters);)
+
+--delete vs truncate vs drop
+–> DELETE: (MSDN)
+
+1. Removes Some or All rows from a table.
+
+2. A WHERE clause can be used to remove some rows. If no WHERE condition is specified, all rows will be removed.
+
+3. Causes all DELETE triggers on the table to fire.
+
+4. It removes rows row-by-row one at a time and records an entry in the Transaction logs, thus is slower than TRUNCATE.
+
+5. Every deleted row in locked, thus it requires more number of locks and database resources.
+
+6. According to MS BOL, if a table is a Heap or no Clustered index is defined than the row-pages emptied are not de-allocated instantly and remain allocated in the heap. Thus, no other object can reuse this associated space. Thus to de-allocate the space a Clustered index is required or TABLOCK hint should be applied in the DELETE statement.
+
+7. This is a DML command as it is just used to manipulate/modify the table data. It does not change any property of a table.
+
+ 
+–> TRUNCATE: (MSDN)
+
+1. Removes All rows from a table.
+
+2. Does not require a WHERE clause, so you can not filter rows while Truncating.
+
+3. With SQL Server 2016 you can Truncate a Table Partition, for more details check [here].
+
+4. IDENTITY columns are re-seeded on this operation, if no seed was defined then the default value 1 is used.
+
+5. No Triggers are fired on this operation because it does not operate on individual rows.
+
+6. It de-allocates Data Pages instead of Rows and records Data Pages instead of Rows in Transaction logs, thus is faster than DELETE.
+
+7. While de-allocating Pages it locks Pages and not Rows, thus it requires less number of locks and few resources.
+
+8. TRUNCATE is not possible when a table:
+a. is reference by a Foreign Key or tables used in replication or with Indexed views.
+b. participates in an Indexed/Materialized View.
+c. published by using Transactional/Merge replication.
+
+9. This is a DDL command as it resets IDENTITY columns, de-allocates Data Pages and empty them for use of other objects in the database.
+
+Note: It is a misconception among some people that TRUNCATE cannot be roll-backed. But in reality both DELETE and TRUNCATE operations can be COMMITTED AND ROLL-BACKED if provided inside a Transaction. The only method to Rollback a committed transaction after DELETE/TRUNCATE is to restore the last backup and run transactions logs till the time when DELETE/TRUNCATE is about to happen.
+
+ 
+–> DROP: (MSDN)
+
+1. The DROP TABLE command removes one or more table(s) from the database.
+
+2. All related Data, Indexes, Triggers, Constraints, and Permission specifications for the Table are dropped by this operation.
+
+3. Some objects like Views, Stored Procedures that references the dropped table are not dropped and must be explicitly dropped.
+
+4. Cannot drop a table that is referenced by any Foreign Key constraint.
+
+5. According to MS BOL, Large tables and indexes that use more than 128 extents are dropped in two separate phases: Logical and Physical. In the Logical phase, the existing allocation units used by the table are marked for de-allocation and locked until the transaction commits. In the physical phase, the IAM pages marked for de-allocation are physically dropped in batches.
+
+--standalone procedure vs procedure
+Procedure is a named PL/SQL block tht is stored in the database.
+Package is a collection of functions and procedures stored within the database. 
+Pkg consists of 2 parts 
+1. Specification - declares types,functions,procedures,exceptions,cursors
+2. Body - implements the specification
+Whenevr a func/proc is referenced from the pkg thn the entire pkg is loaded in the memory so tht whn a diff func from the same pkg is referenced thn its already there in the memory
+
+1. Procedure Overloading and Function Overloading Possible in Package. This  Overloading Concept Not Possible in Procedure.
+2. Variables in Package we Can use as a Global Variables. its Not Possible in Procedure.
+
+Stand Alone Procedure: A procedure which is not enclosed in a package is called Stand Alone Procedure.
+Stored Procedure: A Procedure which is defined in Package is called Stored Procedure and if we want to call that procedure out of package is to use <PKG Name>.<Procedure Name>
+
+Stand Alone Proc: Block of PLSQL code but not defined in the data dictionary, hence not reusable
+Stored Procedure: Block of PLSQL code Defined in data dictionary, implements reusability. Check in user_source table
+
+---why bitmap index is used in datawarehousing
+When you index a field in a RDBMS table, you can create one of two types of indices: 1) B-Tree and 2) Bitmap. Both of these are data structures on how the indices are stored.
+
+1) a B-Tree stores the indexed values in a balanced tree. This makes insert/update/delete elements of the tree O(log n) per row run-time complexity with O(n) on storage space. Since you will make inserts/updates often in a Data Warehouse and storage grows pretty fast (think big data), B-Tree is a good overall solution.
+
+B-tree
+
+2) A Bitmap index creates a matrix of all possible values of a field with every row of that field. In this matrix, a value of 1 or 0 is stored, the value is a 1 if the value of this database field = the value of the matrix column.
+
+i.e.: Let’s say I have a field called gender in my employee table, possible values are male, female, unknown.
+
+Let’s say there are 4 employees, Bob, John, Jenny, Uber.
+
+The Bitmap index will look like this:
+
+male | female | unknown
+
+Bob 1 | 0 | 0
+
+Jenny 0 | 1 | 0
+
+John 1 | 0 | 0
+
+Uber 0 | 0 | 1
+
+That is a Bitmap index. When the index gets activated (i.e. you want all female employees), the database engine will only look into the female column of the bitmap and return rows that = 1. This is much faster compared to a B-tree whereas you have to traverse the tree, find the node, compare all letters of the gender field to realize yes indeed Bob is a male.
+
+For n rows in the table, Bitmap has a run time complexity of O(n), as it only searches once per row. For a B-tree, it’s O(n log n) as traversing the B-Tree is O(log n) per row, then there are n rows to search through.
+
+Unfortunately, you can see that if I have a million rows, I will have 3 x 1 million values in the Bitmap index, whereas the B-tree will have only 1 million (it’s O (n)). If I use this on a field with 50 different values, I will have 50 million values that needs to be stored while the B-tree will still have 1 million.
+
+Bitmap indices are not recommended for use on fields with large number of unique values.
+
+Thus you can see, this has absolutely NOTHING to do with whether or not you know in advance which fields will be used in a where clause.
+
+The reason why Bitmap indices are used in DW is that, in DW, you can (and should) create supporting fields to make things easier to query. For example, if the users ask a lot of common questions like did this employee meet bench mark? Did this sale have partial / full returns? You would create fields such as IS_ABOVE_BENCH_MARK or IS_REFUNDED; where the values of those fields are 1 or 0. So when you query, you will just say IS_ABOVE_BENCH_MARK = 1, give bonus…or something like that.
+
+This means all these fields can have a Bitmap index on them, because YOU are controlling the values to be limited (yes, it’s a bitmap index on a bit field).
+
+This is just an rough idea, as ideas of index can get very complicated (such as how do you link the value to the row? What does a B-Tree index on multiple fields look like and how does that work where I don’t have all fields in the query?). It gets messy.
+
+Performance* thought this is debatable [1].
+
+*Where the majority of tables consist of fields that have low cardinality i.e. a limited set of distinct values. For example, fields like IsSmoker, IsMarried, etc. → Y/N or fields like Gender → M/F/U.
+
+----higher watermark
+High-water Mark 
+
+This is a term used with table segments stored in the database. If you envision a table, for example, as a 'flat' structure or as a series of blocks laid one after the other in a line from left to right, the high-water mark (HWM) would be the rightmost block that ever contained data, as illustrated in Figure 10-1. 
+
++---- high water mark of newly created table
+|
+V
++--------------------------------------------------------+
+|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
++--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+
+      high water mark after inserting 10,000 rows
+                                    |
+                                    v
++--------------------------------------------------------+
+|x |x |x |x |x |x |x |x |x |x |x |x |  |  |  |  |  |  |  |
+|x |x |x |x |x |x |x |x |x |x |x |x |  |  |  |  |  |  |  |
++--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+
+
+      high water mark after inserting 10,000 rows
+                                    |
+                                    v
++--------------------------------------------------------+
+|x |x |x |x |x |x |x |  |  |  |  |  |  |  |  |  |  |  |  |
+|x |x |x |x |x |x |x |  |  |  |  |  |  |  |  |  |  |  |  |
++--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+
+Figure 10-1. Depiction of an HWM 
+
+Figure 10-1 shows that the HWM starts at the first block of a newly created table. As data is placed into the table over time and more blocks get used, the HWM rises. If we delete some (or even all) of the rows in the table, we might have many blocks that no longer contain data, but they are still under the HWM, and they will remain under the HWM until the object is rebuilt, truncated, or shrunk (shrinking of a segment is a new Oracle 10g feature that is supported only if the segment is in an ASSM tablespace). 
+
+The HWM is relevant since Oracle will scan all blocks under the HWM, even when they contain no data, during a full scan. This will impact the performance of a full scan¿especially if most of the blocks under the HWM are empty. To see this, just create a table with 1,000,000 rows (or create any table with a large number of rows), and then execute a SELECT COUNT(*) from this table. Now, DELETE every row in it and you will find that the SELECT COUNT(*) takes just as long (or longer, if you need to clean out the block! Refer to the 'Block Cleanout' section of Chapter 9) to count 0 rows as it did to count 1,000,000. This is because Oracle is busy reading all of the blocks below the HWM to see if they contain data. You should compare this to what happens if you used TRUNCATE on the table instead of deleting each individual row. TRUNCATE will reset the HWM of a table back to 'zero' and will truncate the associated indexes on the table as well. If you plan on deleting every row in a table, TRUNCATE¿if it can be used¿would be the method of choice for this reason. 
+
+--referential integrity
+it is essential to guarantee that a foreign key always refers to a record which exists in the other table. This is known as referential integrity.
+
+Example: If "New Delhi Branch" is a branch name appearing in one of the tuples in the account relation, then there exists a tuple in the branch relation for branch "New Delhi Branch".
+
+Referential integrity is usually enforced by the combination of a primary key and a foreign key. For referential integrity to hold, any field in a table that is declared a foreign key can contain only values from a parent tables primary key field.
+
+Referential integrity is a feature provided by relational database management systems (RDBMS’s) that prevents users or applications from entering inconsistent data.
+
+Referential integrity is a database constraint that ensures that references between data are indeed valid and intact.
+
+The main objective of Referential integrity is to maintain data of the two base relations in consistent state during tuple insertion, deletion and modification.
+
+Example of Referential Integrity
+
+The SQL statement defining the parent table, DEPARTMENT, is:
+
+CREATE TABLE DEPARTMENT
+      (DEPTNO    CHAR(3)     NOT NULL,
+       DEPTNAME  VARCHAR(29) NOT NULL,
+       MGRNO     CHAR(6),
+       ADMRDEPT  CHAR(3)     NOT NULL,
+       LOCATION  CHAR(16),
+          PRIMARY KEY (DEPTNO))
+   IN RESOURCE 
+
+The SQL statement defining the dependent table, EMPLOYEE, is:
+
+CREATE TABLE EMPLOYEE
+      (EMPNO     CHAR(6)     NOT NULL PRIMARY KEY,
+       FIRSTNME  VARCHAR(12) NOT NULL,
+       LASTNAME  VARCHAR(15) NOT NULL,
+       WORKDEPT  CHAR(3),
+       PHONENO   CHAR(4),
+       PHOTO     BLOB(10m)   NOT NULL,
+          FOREIGN KEY DEPT (WORKDEPT)
+          REFERENCES DEPARTMENT ON DELETE NO ACTION)
+   IN RESOURCE 
+
+By specifying the DEPTNO column as the primary key of the DEPARTMENT table and WORKDEPT as the foreign key of the EMPLOYEE table, you are defining a referential constraint on the WORKDEPT values. This constraint enforces referential integrity between the values of the two tables. In this case, any employees that are added to the EMPLOYEE table must have a department number that can be found in the DEPARTMENT table. 
+
+Oracle delete from tables with referential integrity
+Experts,
+I have 3 tables say a, b and c. table a has the primary key 'a_id' and table b has the primary key 'b_id' and also foreign key from table a as 'a_id'. Table c has the primary key 'c_id' and the foreign key from table b which is 'b_id'. 
+If I want to delete a record from table a which has child record in table b and the child record in table b has a child record in table c.
+
+If you set the constraints to cascade on delete, then a single delete will remove all the children as well.
+
+
+can it be done in a single delete statement?
+
+--
