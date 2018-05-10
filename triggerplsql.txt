@@ -1,0 +1,278 @@
+package advantages
+
+What is pl/sql packages.?
+
+It is a collection of related variables,cursors,procedures,functions stored at one location.
+
+Better performance
+When you invoke a packaged subprogram for the first time, the entire package is loaded into memory. Later calls to subprograms in the same package need no disk I/O. This translates to better performance.
+
+Security and maintainability through private code
+With packages, you can specify which subprograms, types and items are public (visible and accessible outside the package) or private (hidden and inaccessible outside the package)
+
+Organized code management,Easy implementation changes
+Changes to a subprogram can create havoc with other programs that reference it. Not so with packages. If only code in the package body is changed, no change is needed in the dependent objects. Not even a recompile is required.
+
+Disadvantages of packages.
+
+Whole package get effected if any procedure or function in the package not working.
+All the procedures & functions get compiled if u made a changes in one procedure.
+-------------------------------------------------------------------------------------
+What is snapshot in oracle?
+A snapshot is a recent copy of a table from db or in some cases, a subset of rows/cols of a table. They are used to dynamically replicate the data between distributed databases.
+
+Explain an ORA-01555 (snapshot too old )
+  
+You get this error when you get a snapshot too old within rollback. It can usually be solved by increasing the undo retention or increasing the size of rollbacks. You should also look at the logic involved in the application getting the error message.
+
+What is the difference between a snapshot and a materialized view?
+
+Snapshot is a copy of a table on a remot system but materialized niew is used to make a snapshot of a table available on a remote system.
+
+There is no basic difference between the materialized view and snapshot. Snapshot is an old term for materialized view. The only difference is that it is redefined in the later version. The basic definition is materialized view is a table that stores derived data. For example we have a master database and we create a materialized view for that master database then if we need to update certain table every 2 or 4 hours in materialized view then it will be updated. Or in other words a materialized view is a replica of a target master from a single point in time. In the earlier version of Oracle database snapshots were enhanced to enableDMLs. But with the later release version of database snapshots started to be used in data warehouse environments also. So a new terminology materialized view was introduced to address both distributed and data warehouse.
+
+
+syntax:
+CREATE SNAPSHOT my_replicated_table 
+       PCTFREE 10 PCTUSED 40
+       TABLESPACE ts2
+       STORAGE (initial 60k next 10k pctincrease 1)
+       REFRESH FAST
+               START WITH SYSDATE
+               NEXT (sysdate+1) + 3/24 
+       AS SELECT * FROM ORACLE. my_master_table@london;
+
+GRANT ALL ON my_replicated_table  TO PUBLIC;
+
+"Complete Refresh" means you truncate entire materialized view and insert new data.
+
+"Fast Refresh" means you update (or insert/delete) only the rows which have been changed on master tables.
+
+And just as information "Force Refresh" mean, Oracle tries to make a Fast Refresh and if this is not possible then do "Complete Refresh"
+
+Usually Fast Refresh is much faster than Complete Refresh but it has restrictions. You have to define MATERIALIZED VIEW LOG on master tables
+
+
+
+
+
+
+-------------------------------------------------------------------------------------------------------------------------------- 
+
+1. What are the system privileges that are required by a schema owner (user) to create a trigger on a table?
+A user must be able to alter a table to create a trigger on the table. The user must own the table and either have the ALTER TABLE privilege on that table or have the ALTER ANY TABLE system privilege. In addition, the user must have the CREATE TRIGGER system privilege. User should have the CREATE ANY TRIGGER system privilege to be able to create triggers in any other user account or schema.
+A database-level event trigger can be created if the user has the ADMINISTER DATABASE TRIGGER system privilege.
+
+2. What are the different types of triggers?
+There are following two types of triggers:
+Database triggers are executed implicitly whenever a Data Manipulation Language (DML) statement is carried out on a database table or a Data Definition Language (DDL) statement, such as CREATE OR ALTER, is performed on the database.
+They may also be executed when a user or database event occurs, such as a user logs on or a database is shutdown.
+Application triggers are executed implicitly whenever a DML event takes place within an application, such as WHEN_NEW_FORM_INSTANCE in the Oracle Forms application.
+
+7. How can triggers be used for the table auditing?
+Triggers can be used to track values for data operations on tables. This is done using the old and new qualifiers within the trigger code. These two clauses help keep track of the data that is being inserted, updated, or deleted in the table; and therefore, facilitate in application auditing of DML statements. The audit
+trail can be written to a user-defined table and audit records can be generated for both row-level and statement-level triggers.
+
+9. What are INSTEAD OF triggers?
+The INSTEAD OF triggers are used in association with views. The standard table-based triggers cannot be used by views.
+These triggers inform the database of what actions are to be performed instead of the actions that invoked the trigger.
+Therefore, the INSTEAD OF triggers can be used to update the underlying tables, which are part of the views.
+They can be used on both relational views and object views. The INSTEAD OF triggers can only be defined as row-level triggers and not as statement-level triggers.
+
+10. What is the difference between database trigger and stored procedure?
+The main difference between database trigger and stored procedure is that the trigger is invoked implicitly and stored procedure is invoked explicitly.
+Transaction Control statements, such as COMMIT, ROLLBACK, and SAVEPOINT, are not allowed within the body of a trigger whereas, these statements can be included in a stored procedure.
+
+11. How can the performance of a trigger be improved?
+The performance of a trigger can be improved by using column names along with the UPDATE clause in the trigger. This will make the trigger fire when that particular column is updated and therefore, prevents unnecessary action of trigger when other columns are being updated.
+
+12. What are the events on which a database trigger can be based?
+Database triggers are based on system events and can be defined at database or schema level. The various events on which a database trigger can be based are given as follows:
+Data definition statement on a database or schema object
+Logging off or on of a specific user
+Database shutdown or startup
+On any specific error that occurs
+
+13. What is a CALL statement? Explain with an example.
+A CALL statement within a trigger enables you to call a stored procedure within the trigger rather than writing the Procedural Language/Structured Query Language (PL/SQL) code in it, The procedure may be in PL/SQL, C, or Java language. Following is an example of the CALL statement:
+CREAT OR REPLASE TRIGGER<trigger_name>
+BEFORE UPDATE OF <column_name> ON <table_name>
+FOR EACH ROW
+WHEN <condition_clause>
+CALL <procedure_name>
+
+14. What is a mutating table?
+A mutating table is a table, which is in the state of transition. In other words, it is a table, which is being updated at the time of triggering action. If the trigger code queries this table, then a mutating table error occurs, which causes the trigger to view the inconsistent data.
+
+15. Which data dictionary views have the information on the triggers that are available in the database?
+The data dictionary views that have information on database triggers are given as follows:
+USER_OBJECTS —Contain the name and status of a trigger as well as the date and time of trigger creation
+USER_ERRORS—Contain the compilation error of a trigger
+USER_ TRIGGERS— Contain the source code of a trigger
+USER_ TRIGGER_COLS—Contain the information on columns used in triggers
+
+16. What are schema-level triggers?
+Schema-level triggers are created on schema-level operations, such as create table, alter table, drop table, rename, truncate, and revoke. These triggers prevent DDL statements, provide security, and monitor the DDL operations.
+
+17. What is a database event trigger?
+Trigger that is executed when a database event, such as startup, shutdown, or error, occurs is called a database event trigger. It can be used to reference the attributes of the event and perform system maintenance functions immediately after the database startup.
+
+18. In what condition is it good to disable a trigger?
+It is good to disable triggers during data load operations. This improves the performance of the data loading activities. The data modification and manipulation that the trigger would have performed has to be done manually after the data loading.
+
+19. Which column of the USERJTRIGGERS data dictionary view displays the database event that will fire the trigger?
+The Description column of the USERJTRIGGERS view combines information from many columns to display the trigger header, which includes the database event.
+
+20. What is the meaning of disabling a trigger?
+When a trigger is disabled, it does not mean that it is deleted.
+The code of the trigger is still stored in the data dictionary but the trigger will not have any effect on the table.
+
+21. Can triggers stop a DML statement from executing on a table?
+Yes, triggers have the capability of stopping any DML statement from execution on a table. Any logical business rule can be implemented using PL/SQL to block modification on table data.
+
+22. Can a view be mutating? If yes, then how?
+No, a view cannot be mutating like a table. If an UPDATE statement fires an INSTEAD OF trigger on a view, the view is not considered to be mutating. If the UPDATE statement had been executed on a table, the table would have been considered as mutating.
+
+23. Can a COMMIT statement be executed as part of a trigger?
+No, A COMMIT statement cannot be executed as a part of a trigger because it is a Transaction Control statement, which cannot be executed within a trigger body. Triggers fire within transactions and cannot include any Transaction Control statement within its code.
+
+24. What is the difference between ALTER TRIGGER and DROP TRIGGER statements?
+An ALTER TRIGGER statement is used to recompile, disable, or enable a trigger; whereas, the DROP TRIGGER statement is used to remove the trigger from the database.
+
+25. Do  triggers  have  restrictions  on the  usage  of large datatypes, such as LONG and LONG RAW?
+Triggers have restrictions on the usage of large datatypes as they cannot declare or reference the LONG and LONG RAW datatypes and cannot use them even if they form part of the object with which the trigger is associated. Similarly, triggers cannot modify the CLOB and BLOB objects as well; however, they can reference them for read-only access.
+
+32. Are  DDL triggers fired for DDL statements within a PL/SQL code executed using the DBMS.SQL package?
+No, DDL triggers are not executed for DDL statements, which are executed within the PL/SQL code using the DBMS_SQL package.
+
+33. Does a USER_OBJECTS view have an entry for a trigger?
+Yes, the USER_OBJECTS view has one row entry for each trigger in the schema.
+
+34. How can you view the errors encountered in a trigger?
+The USERJERRORS view can be used to show all the parsing errors that occur in a trigger during the compilation until they are resolved.
+
+35. Does USERJTRIGGERS have entry for triggers with compilation errors?
+Yes, USER_TRIGGERS have entries for all triggers that are created in the schema with or without errors.
+
+36. Which of the following events cannot be customized with triggers?
+a. INSERT INTO statement
+b. CREATE TABLE statement in a schema
+c. DELETE CASCADE CONSTRAINTS
+d. SET PAUSE ON
+Option D cannot be customized; whereas, all the other options can be customized using triggers.
+
+37. Is it possible to pass parameters to triggers?
+No, it is not possible to pass parameters to triggers. However, triggers fired by INSERT and UPDATE statements can reference new data by using the mew prefix. In addition, the triggers fired in response to UPDATE and DELETE statements can reference old, modified, or deleted data using the :old prefix.
+
+38. Can a SELECT statement fire a trigger?
+No, a SELECT statement cannot fire a trigger. DML statements, such as INSERT, UPDATE, and DELETE, can cause triggers to fire.
+
+39. Can cursors be part of a trigger body?
+Yes, cursors can be a part of code in trigger.
+
+42. Is it possible to create STARTUP or SHUTDOWN trigger for ON-SCHEMA?
+No, It is not possible to create STARTUP or SHUTDOWN triggers for ON-SCHEMA.
+
+43. What does the BASE_OBJECT_TYPE column shows in the USER.TRIGGERS data dictionary view?
+The BASE_OBJECT_TYPE column identifies the type of database object with which the trigger is associated. It shows whether the object of database is a TABLE, VIEW, SCHEMA, or DATABASE.
+
+44. Is it possible to create the following trigger:
+BEFORE OR AFTER UPDATE trigger FOR EACH ROW?
+No, it is an invalid trigger as both BEFORE and AFTER cannot be used in the same trigger. A trigger can be either BEFORE TRIGGER or AFTER TRIGGER.
+
+46. Can INSTEAD OF triggers be used to fire once for each statement on a view?
+No, INSTEAD OF triggers cannot be used for each statement however, It can only be used for each row on a view.
+
+47. Is it possible to include an INSERT statement on the same table to which the trigger is assigned?
+If an INSERT statement is used on the same table to which the trigger is associated, then this will give rise to a mutating table, as it is not possible to change the same table that is already in the process of being changed.
+
+48. What are conditional predicates?
+Triggers use conditional predicates, such as INSERTING, UPDATING, and DELETING, to determine which particular event will cause the trigger to fire. All the three predicates have Boolean values and are useful in triggers, such as AFTER INSERT or UPDATE.
+
+49. Write the ALTER statement to enable all the triggers on the T.STUDENTS table.
+The ALTER statement is given as follows:
+ALTER TABLE T_STUDENTS ENABLE ALL TRIGGERS;
+
+50. Which column in the USER.TRIGGERS data dictionary view shows that the trigger is a PL/SQL trigger?
+The ACTION_TYPE column of the USER_TRIGGERS data dictionary view shows that the trigger is a PL/SQL trigger.
+
+21). What are the difference between Trigger and Stored Procedure?
+Ans: Differences between Stored Procedures and triggers ---
+When you create a trigger you have to identify event and action of your trigger but when you create s.p you don't identify event and action 
+Trigger is run automatically if the event is occured but s.p don't run automatically but you have to run it manually 
+Trigger execute implicitly whereas store procedure execute via procedure call from another block. 
+Within a trigger you can call specific s.p but within a sp you cannot call atrigger 
+We can call a stored procedure from front end (.asp files, .aspx files, .ascx files etc.) but we can't call a trigger from these files. 
+Stored procedure can take the input parameters, but we can't pass the parameters as an input to a trigger. 
+
+7). Suppose you have a view that is formed by joining two tables together, what database object would allow you to insert a new row into both of the two tables joined together? 
+Ans: An INSTEAD OF trigger
+
+8). If a trigger aborts due to a run-time error and no exception handler exists, what will occur? 
+Ans: The transaction will be rolled back and control passes to the calling environment.
+
+9). Which T-SQL statement can you include in the code of the trigger to indicate a normal exit from the trigger? 
+Ans: RETURN
+
+10). If there is an AFTER INSERT trigger on a table, how many times will that trigger fire if you insert 50 rows using a single INSERT? 
+Ans: Trigger will fire once
+
+11). If a DML trigger fires and executes another DML statement also contains a trigger, what will happen to that second trigger, it will fire or not? 
+Ans: The second trigger will fire
+
+12). What command explicitly fires a trigger, means can we fire trigger forcefully? 
+Ans: None, there is no command, you can't fire trigger fourcefuly. A trigger is implicitly fired when the triggering event occurs.
+
+13). How many triggers are possible per table?
+Ans: One InsteadOfTrigger and any After Triggers.
+
+14). You have created a DML trigger that fires when an UPDATE operation is performed. You want to ensure that this DML trigger does not fire in the event that no rows are affected by the UPDATE operation. What you will do to implement same?
+Ans: I will use @@ROWCOUNT
+Ex: IF @@ROWCOUNT = 0 RETURN
+
+15). Is it possible to create trigger on views?
+Ans: Yes, you can create only InsteadOf trigger in view.
+AFTER trigger allowed only on table.
+
+16). Suppose you need to save/get the count of rows inserted into a table, How you will achieve that?
+Ans: I will take the help of trigger and magic table.
+SELECT COUNT(*) FROM Inserted
+
+17). You are working with some Transact-SQL code that causes an error. You want to determine the name of the trigger or stored procedure that caused a specific error. You configure the appropriate TRY . . . .CATCH construct, using the code so that you can further diagnose the error. What will you do for that?
+Ans: I can use the ERROR_PROCEDURE() system function to determine the name of the trigger or stored procedure in which the error occurred.
+
+18). How can you use @@ROWCOUNT to improve the performance of a trigger?
+Ans: You can improve the performance of the trigger by testing whether @@ROWCOUNT is 0 in the very first line of the trigger. When no rows are affected, there is no point in proceeding with the trigger. It must be the first line because @@ROWCOUNT will be set back to 0 by any additional statement.
+When the AFTER trigger begins, @@ROWCOUNT will contain the number of rows affected by the outer INSERT, UPDATE, or DELETE statement.
+
+19). You notice a system uses a lot of triggers to enforce foreign key constraints, and the triggers are error-prone and difficult to debug. What changes can you recommend to reduce the use of triggers? 
+Ans: Foreign key constraints can be implemented by using triggers, but the code can become complex and error prone.
+You can recommend instead that the database developers implement true referential integrity by using T-SQL declared foreign key constraints rather thantriggers.
+
+20). Suppose there is an important table that requires some simple logging actions to take place after any changes to the data. The logging is to a custom table built especially to meet application requirements.What recommendation might you make to help implement such a logging action? 
+Ans: I will recommend that the database developers use a DML AFTER trigger.
+This type of trigger executes after an INSERT, UPDATE, or DELETE statement and it can write to the logging table.
+
+Advantages of trigger:
+
+1) Triggers can be used as an alternative method for implementing referential integrity constraints.
+
+2) By using triggers, business rules and transactions are easy to store in database and can be used consistently even if there are future updates to the database.
+
+3) It controls on which updates are allowed in a database.
+
+4) When a change happens in a database a trigger can adjust the change to the entire database.
+
+5) Triggers are used for calling stored procedures.
+
+Disadvantages of trigger:
+
+1) It is easy to view table relationships , constraints, indexes, stored procedure in database but triggers are difficult to view.
+
+2) Triggers execute invisible to client-application application. They are not visible or can be traced in debugging code.
+
+3) It is hard to follow their logic as it they can be fired before or after the database insert/update happens.
+
+4) It is easy to forget about triggers and if there is no documentation it will be difficult to figure out for new developers for their existence.
+
+5) Triggers run every time when the database fields are updated and it is overhead on system. It makes system run slower.
