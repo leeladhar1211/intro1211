@@ -1,0 +1,556 @@
+
+1.ref cursor in Oracle PL/SQL is much like an ordinary PL/SQL cursor in that it acts as a pointer to the result set of the cursor with which it is associated. However, the difference is that a ref cursor can be assigned to different result sets whereas a cursor is always associated with the same result set. Cursors and ref cursors are not interchangeable.
+
+2.The real purpose of ref cursors is to be able to share cursors and result sets between the client and the Oracle server or between different subroutines. For example you might open a cursor in an Oracle Forms client and then continue working with the cursor on the server or you might open a cursor in a Java program and then continue working with it in an Oracle PL/SQL stored procedure. 
+
+3.Ref cursors also come in two variants: strongly typed and weakly typed depending on how likely you are (or want to) reuse a cursor variable. Weak ref cursor types can be associated with any query whereas strong ref cursor types can only be associated with cursors of the same type.
+
+Declare 
+type rc is ref cursor; 
+
+cursor c is select * from dual; 
+
+l_cursor rc; 
+begin 
+if ( to_char(sysdate,'dd') = 30 ) then 
+open l_cursor for 'select * from emp'; 
+elsif ( to_char(sysdate,'dd') = 29 ) then 
+open l_cursor for select * from dept; 
+else 
+open l_cursor for select * from dual; 
+end if; 
+open c; 
+end; 
+/ 
+No matter how many times you run that block -- cursor C will always be select * from dual. The ref cursor can be anything. 
+Another difference is a cursor can be global -- a ref cursor cannot (you cannot define them OUTSIDE of a procedure / function) 
+Another difference is a ref cursor can be passed from subroutine to subroutine -- a cursor cannot be. 
+Another difference is that static sql (not using a ref cursor) is much more efficient then using ref cursors and that use of ref cursors should be limited to 
+- returning result sets to clients 
+- when there is NO other efficient/effective means of achieving the goal 
+that is, you want to use static SQL (with implicit cursors really) first and use a ref cursor only when you absolutely have to 
+
+Lets look at a couple of examples.
+
+DECLARE
+ TYPE wkrefcurty IS REF CURSOR;
+        -- weak ref cursor type
+ my_cur wkrefcurty;
+ dept departments%ROWTYPE;
+ BEGIN
+  OPEN my_cur FOR SELECT * FROM departments;
+  FETCH my_cur INTO dept;
+  CLOSE my_cur;
+ END;
+
+Note that despite the cursor being weakly typed, the variable to hold the results must be strongly typed. In other words you can't fetch into a variable of the weak cursor's row type.
+
+The following declaration generates a PL/SQL compilation error (PLS-00320: the declaration of the type of this expression is incomplete or malformed).
+
+DECLARE
+ TYPE wkrefcurty IS REF CURSOR;
+ my_cur wkrefcurty;
+ rslt my_cur%ROWTYPE; -- generates a PL/SQL 320 error
+ BEGIN
+  OPEN my_cur FOR SELECT * FROM departments;
+  FETCH my_cur INTO rslt;
+  CLOSE my_cur ;
+ END;
+/
+ORA-06550: line 4, column 7:
+PLS-00320: the declaration of the type of this expression is incomplete or malformed
+ORA-06550: line 4, column 7:
+PL/SQL: Item ignored
+ORA-06550: line 7, column 20:
+PLS-00320: the declaration of the type of this expression is incomplete or malformed
+ORA-06550: line 7, column 2:
+
+Also with a PL/SQL weak ref cursor if you fetch into a variable of incompatible type this causes an an exception to be raised by Oracle at run time. For example
+
+DECLARE
+ TYPE wkrefcurty IS REF CURSOR; 
+ -- weakly-typed ref cursor
+ my_cur wkrefcurty;
+ emp employees%ROWTYPE;
+BEGIN
+  OPEN my_cur FOR SELECT * FROM departments;
+  FETCH my_cur INTO emp;
+  CLOSE my_cur;
+END;
+/
+DECLARE
+*
+ERROR at line 1:
+ORA-06504: PL/SQL: Return types of Result Set variables or query do not match
+ORA-06512: at line 7
+
+In the above example we attempted to fetch a row from the departments table into a variable that matches the employee table structure. This causes Oracle to raise an exception.
+With a strong PL/SQL ref cursor type, errors like this are reported by the Oracle PL/SQL compiler at compile time, as in the following example.
+
+DECLARE
+ TYPE myrefcurty IS REF CURSOR RETURN employees%ROWTYPE; -- strong ref cursor type
+ my_cur myrefcurty;
+ emp employees%ROWTYPE;
+BEGIN
+ OPEN my_cur FOR SELECT * FROM departments; -- can't do this
+ FETCH my_cur INTO emp;
+ CLOSE my_cur;
+END;
+/
+ORA-06550: line 6, column 18:
+PLS-00382: expression is of wrong type
+ORA-06550: line 6, column 2:
+PL/SQL: SQL Statement ignored
+
+As long as the result set matches the cursor declaration we can reuse the cursor variable in our Oracle PL/SQL code for new queries as much as we like as in the following examples.
+
+Example of cursor re-use using a strongly-typed ref cursor.
+
+DECLARE
+ TYPE myrefcurty IS REF CURSOR RETURN employees%ROWTYPE; -- strong ref cursor type
+ my_cur myrefcurty;
+ emp employees%ROWTYPE;
+BEGIN
+ OPEN my_cur FOR SELECT * FROM employees; 
+ FETCH my_cur INTO emp;
+ CLOSE my_cur;
+
+ OPEN my_cur FOR 
+  SELECT * FROM employees
+  WHERE employee_id = 1; 
+ FETCH my_cur INTO emp;
+ CLOSE my_cur;
+
+ OPEN my_cur FOR 
+  SELECT * FROM employees 
+  WHERE employee_id > 1000; 
+ FETCH my_cur INTO emp;
+ CLOSE my_cur;
+
+ OPEN my_cur 
+  FOR SELECT * FROM employees 
+  WHERE department_id = 1; 
+ FETCH my_cur INTO emp;
+ CLOSE my_cur;
+
+END;
+
+The following example shows the re-use of a weakly-typed ref cursor.
+
+DECLARE
+ TYPE wkrefcurty IS REF CURSOR; 
+     -- weakly-typed ref cursor
+ my_cur wkrefcurty;
+ emp employees%ROWTYPE;
+ dept departments%ROWTYPE;
+BEGIN
+ OPEN my_cur FOR SELECT * FROM departments;
+ FETCH my_cur INTO dept;
+ CLOSE my_cur;
+
+ OPEN my_cur FOR SELECT * FROM employees;
+ FETCH my_cur INTO emp;
+ CLOSE my_cur;
+END;
+
+As mentioned earlier, we can open a ref cursor in one Oracle PL/SQL procedure and fetch from it in another as in the following example.
+
+CREATE OR REPLACE PACKAGE ref_cursor_demo IS
+ TYPE wkrefcurty IS REF CURSOR; 
+     -- weakly-typed ref cursor
+ PROCEDURE open_cursor (the_cursor OUT wkrefcurty);
+ PROCEDURE fetch_cursor (the_cursor IN OUT wkrefcurty);
+END ref_cursor_demo;
+
+CREATE OR REPLACE PACKAGE BODY 
+ref_cursor_demo IS
+
+ PROCEDURE open_cursor (the_cursor OUT wkrefcurty) IS 
+ BEGIN
+  OPEN the_cursor FOR 
+   SELECT * FROM departments
+   ORDER BY department_name DESC;
+END open_cursor;
+
+ PROCEDURE fetch_cursor (the_cursor IN OUT wkrefcurty) IS 
+  dept departments%ROWTYPE;
+BEGIN
+ FETCH the_cursor INTO dept;
+ dbms_output.put_line('1st department is '||dept.department_name);
+END fetch_cursor;
+END ref_cursor_demo;
+
+DECLARE
+ my_cur ref_cursor_demo.wkrefcurty;
+BEGIN
+ ref_cursor_demo.open_cursor(my_cur);
+ ref_cursor_demo.fetch_cursor(my_cur);
+END;
+/
+-----------------------------------------------------------------------------------------------------------------------------------------
+1.Implicit cursors are automatically created and used by Oracle every time you issue a Select statement in PL/SQL. If you use an implicit cursor, Oracle will perform the open, fetches, and close for you automatically. Implicit cursors are used in statements that return only one row. If the SQL statement returns more than one row, an error will occur.
+The process of an implicit cursor is as follows:
+Whenever an SQL statement is executed, any given PL/SQL block issues an implicit cursor, as long as an explicit cursor does not exist for that SQL statement.
+1.A cursor is automatically associated with every DML statement (UPDATE, DELETE, and INSERT).
+2.All UPDATE and DELETE statements have cursors those recognize the set of rows that will be affected by the operation.
+3.An INSERT statement requires a place to accept the data that is to be inserted in the database; the implicit cursor fulfills this need.
+4.The most recently opened cursor is called the “SQL%” Cursor.
+5.The implicit cursor is used to process INSERT, UPDATE, DELETE, and SELECT INTO statements. Oracle automatically performs the OPEN, FETCH, and CLOSE operations, during the processing of an implicit cursor.
+
+Example 1 of an Implicit cursors
+In the following PL/SQL code block, the select statement makes use of an implicit cursor:
+
+Begin
+Update emp Where 1=2;
+Dbms_output.put_line (sql%rowcount ||’ ‘|| ‘ rows are affected by the update statement’);
+End;
+SELECT SUM (sal) INTO TOTAL
+FROM emp
+WHERE depno = 10;
+
+Another Example of an Implicit cursor
+
+The following single-row query calculates and returns the total salary for a department. PL/SQL creates an implicit cursor for this statement:
+
+SELECT SUM (salary) INTO department_total
+FROM employee
+WHERE department_number = 10;
+
+An Example of PL/SQL Attribute
+
+DECLARE
+rows_deleted NUMBER;
+BEGIN
+DELETE * FROM emp;
+rows_deleted := SQL%ROWCOUNT;
+END;
+------------------------------------------------------------------------------------------------------------------------------------------
+1. Function is mainly used in the case where it must return a value. Where as a procedure may or may not return a value or may return more than one value using the OUT parameter.
+ 
+2. Function can be called from SQL statements where as procedure cannot be called from the sql statements 
+create or replace function inparam(x number)
+select inparam(empno) from emp;
+
+3. Functions are normally used for computations where as procedures are normally used for executing business logic. 
+
+4. You can have DML (insert,update, delete) statements in a function. But, you cannot call such a function in a SQL query.
+
+5. Function returns 1 value only. Procedure can return multiple values (max 1024). 
+
+---------------------------------------------------------------------------------------------------------------------------------------
+One of the nicest things about NDS is its simplicity. Unlike DBMS_SQL, which has dozens of programs and lots of rules to follow, NDS has been integrated into the PL/SQL language through the addition of one new statement, EXECUTE IMMEDIATE (which executes a specified SQL statement immediately), and through the enhancement of the existing OPEN FOR statement, allowing you to perform multiple-row dynamic queries.
+
+EXECUTE IMMEDIATE SQL_string
+   [ [ BULK COLLECT] INTO {define_variable[, define_variable]... | record}]
+   [USING [IN | OUT | IN OUT] bind_argument
+       [, [IN | OUT | IN OUT] bind_argument]...];
+	   
+1. EXECUTE IMMEDIATE will not commit a DML transaction carried out and an explicit commit should be done.
+
+If the DML command is processed via EXECUTE IMMEDIATE, one needs to explicitly commit any changes that may have been done before or as part of the EXECUTE IMMEDIATE itself. If the DDL command is processed via EXECUTE IMMEDIATE, it will commit all previously changed data.
+
+2. Multi-row queries are not supported for returning values, the alternative is to use a temporary table to store the records (see example below) or make use of REF cursors.
+
+3. Do not use a semi-colon when executing SQL statements, and use semi-colon at the end when executing a PL/SQL block.
+
+1. To run a DDL statement in PL/SQL.
+
+begin
+ execute immediate 'set role all';
+end;
+2. To pass values to a dynamic statement (USING clause).
+
+declare
+ l_depnam varchar2(20) := 'testing';
+ l_loc    varchar2(10) := 'Dubai';
+begin
+ execute immediate 'insert into dept values (:1, :2, :3)'
+   using 50, l_depnam, l_loc;
+ commit;
+end;
+
+3. To retrieve values from a dynamic statement (INTO clause).
+
+declare
+ l_cnt    varchar2(20);
+begin
+ execute immediate 'select count(1) from emp'
+   into l_cnt;
+ dbms_output.put_line(l_cnt);
+end;
+4. To call a routine dynamically: The bind variables used for parameters of the routine have to be specified along with the parameter type. IN type is the default, others have to be specified explicitly.
+
+declare
+ l_routin   varchar2(100) := 'gen2161.get_rowcnt';
+ l_tblnam   varchar2(20) := 'emp';
+ l_cnt      number;
+ l_status   varchar2(200);
+begin
+ execute immediate 'begin ' || l_routin || '(:2, :3, :4); end;'
+   using in l_tblnam, out l_cnt, in out l_status;
+
+ if l_status != 'OK' then
+    dbms_output.put_line('error');
+ end if;
+end;
+5. To return value into a PL/SQL record type: The same option can be used for %rowtype variables also.
+
+declare
+ type empdtlrec is record (empno  number(4),
+                           ename  varchar2(20),
+                           deptno  number(2));
+ empdtl empdtlrec;
+begin
+ execute immediate 'select empno, ename, deptno ' ||
+                   'from emp where empno = 7934'
+   into empdtl;
+end;
+
+6. To pass and retrieve values: The INTO clause should precede the USING clause.
+
+declare
+ l_dept    pls_integer := 20;
+ l_nam     varchar2(20);
+ l_loc     varchar2(20);
+begin
+ execute immediate 'select dname, loc from dept where deptno = :1'
+   into l_nam, l_loc
+   using l_dept ;
+end;
+
+EXECUTE IMMEDIATE is a much easier and more efficient method of processing dynamic statements than could have been possible before. As the intention is to execute dynamic statements, proper handling of exceptions becomes all the more important. Care should be taken to trap all possible exceptions.
+
+CREATE PROCEDURE insert_into_table (
+      table_name  VARCHAR2, 
+      deptnumber  NUMBER, 
+      deptname    VARCHAR2, 
+      location    VARCHAR2) IS
+   stmt_str    VARCHAR2(200);
+
+BEGIN
+   stmt_str := 'INSERT INTO ' || 
+      table_name || ' values 
+      (:deptno, :dname, :loc)';
+
+   EXECUTE IMMEDIATE stmt_str 
+      USING 
+      deptnumber, deptname, location;
+
+END;
+/
+
+DECLARE
+  TYPE EmpCurTyp IS REF CURSOR;
+  cur EmpCurTyp;
+  stmt_str VARCHAR2(200);
+  name VARCHAR2(20);
+  salary NUMBER;
+BEGIN
+  stmt_str := 'SELECT ename, sal FROM emp 
+    WHERE job = :1';
+  OPEN cur FOR stmt_str USING 'SALESMAN'; 
+
+LOOP
+  FETCH cur INTO name, salary; 
+  EXIT WHEN cur%NOTFOUND; 
+  -- <process data>  
+END LOOP; 
+CLOSE cur;
+END;
+/
+DECLARE
+  stmt_str VARCHAR2(200);
+  deptnumber NUMBER := 99;
+  deptname VARCHAR2(20);
+  location VARCHAR2(10);
+BEGIN
+  stmt_str := 'INSERT INTO dept_new VALUES  
+  (:deptno, :dname, :loc)';
+  EXECUTE IMMEDIATE stmt_str 
+    USING deptnumber, deptname, location;
+END;
+/
+DECLARE 
+  deptname_array dbms_sql.Varchar2_Table; 
+  stmt_str  VARCHAR2(200);
+  location  VARCHAR2(20);
+  deptnumber NUMBER := 10;
+  deptname   VARCHAR2(20);
+BEGIN
+  stmt_str := 'UPDATE dept_new 
+    SET loc = :newloc
+    WHERE deptno = :deptno
+    RETURNING dname INTO :dname';
+  EXECUTE IMMEDIATE stmt_str 
+    USING location, deptnumber, OUT deptname;
+END;
+/
+---------------------------------------------------------------------------------------------------------------------------
+Autonomous Transactions:
+------------------------------------------
+The easiest way to understand autonomous transactions is to see them in action.
+
+CREATE TABLE at_test (
+      id            NUMBER      NOT NULL,
+     description  VARCHAR2(50)  NOT NULL
+   );
+
+INSERT INTO at_test (id, description) VALUES (1, 'Description for 1');
+INSERT INTO at_test (id, description) VALUES (2, 'Description for 2');
+
+SELECT * FROM at_test;
+
+        ID DESCRIPTION
+---------- --------------------------------------------------
+         1 Description for 1
+         2 Description for 2
+
+2 rows selected.
+
+
+Next, we insert another 8 rows using an anonymous block declared as an autonomous transaction, which contains a commit statement.
+
+DECLARE
+  PRAGMA AUTONOMOUS_TRANSACTION;
+BEGIN
+  FOR i IN 3 .. 10 LOOP
+    INSERT INTO at_test (id, description)
+    VALUES (i, 'Description for ' || i);
+  END LOOP;
+  COMMIT;
+END;
+/
+
+PL/SQL procedure successfully completed.
+
+SELECT * FROM at_test;
+
+        ID DESCRIPTION
+---------- --------------------------------------------------
+         1 Description for 1
+         2 Description for 2
+         3 Description for 3
+         4 Description for 4
+         5 Description for 5
+         6 Description for 6
+         7 Description for 7
+         8 Description for 8
+         9 Description for 9
+        10 Description for 10
+
+10 rows selected.
+
+As expected, we now have 10 rows in the table. If we now issue a rollback statement we get the following result.
+
+ROLLBACK;
+SELECT * FROM at_test;
+
+        ID DESCRIPTION
+---------- --------------------------------------------------
+         3 Description for 3
+         4 Description for 4
+         5 Description for 5
+         6 Description for 6
+         7 Description for 7
+         8 Description for 8
+         9 Description for 9
+        10 Description for 10
+
+8 rows selected.
+
+The 2 rows inserted by our current session (transaction) have been rolled back, while the rows inserted by the autonomous transactions remain. 
+The presence of the PRAGMA AUTONOMOUS_TRANSACTION compiler directive made the anonymous block run in its own transaction, so the internal commit statement did not affect the calling session.
+-------------------------------------------------------------------------------------------------------------------------------------------
+Clustering : 
+
+It is a mechanism to bind the data together.. to achieve clustering clusters are used...
+
+syntax for creating a cluster :
+
+create cluster <cluster_name>
+( cluster_column <data_type>  )
+
+ex :
+create cluster deptno_cluster
+( deptno number );
+
+Syntax for Creating a cluster Table :
+
+create table <table_name>
+(
+column_name <data_type>,
+.
+.
+cluster_column <data_type>
+)cluster cluster_name( cluster_column )
+
+create table emp_cluster_tab
+(
+empno number,
+ename varchar2(10),
+sal number,
+deptno number
+)cluster deptno_cluster( deptno )
+
+Note : Cluster tables cant be used before indexing the cluster...
+
+Indexes : 
+
+Usage : It is used for improving the performance of retrieval of data whenever the search condition is specified is an indexed column..
+
+syntax :
+
+create index <index_name>
+on table table_name( column_name )
+
+create index ename_ind on table emp( ename )
+
+select * from emp where ename = 'SMITH'
+
+Rules for using Indexes :
+
+* Table should contain more than 20000 records
+
+* Table row's should be large with more no. of null values in a column..
+
+* If the table's data is more and only 2-4% of its data should be retrieved
+
+* If a column is very frequently used in a where or join condition.. 
+
+Note :
+* The info. about the indexes can be retrieved from user_indexes..
+
+select * from user_indexes where index_name like 'ENAME_IND'
+
+* To retrieve the info. about the columns on which indexes are defined can be retrieved from user_ind_columns..
+
+select column_name from user_ind_columns
+where table_name = 'EMP';
+
+unique index : If a column is defined with an unique index then it will implictly define an unique constraint on that column..
+
+syntax :
+create unique index <index_name>
+on table table_name( column )
+
+create unique index eno_ind on emp( empno )
+
+Cluster Index : To index a cluster it is used..
+syntax :
+create index <index_name>
+on cluster cluster_name;
+
+create index deptno_cluster_index
+on cluster deptno_cluster;
+
+
+insert into emp_cluster_tab
+values( 101,'sekhar',15000,10 );
+
+select * from emp_cluster_tab;
+
+Note :
+* The information about the clusters can be retrieved from user_clusters..
+
+
+
