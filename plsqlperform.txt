@@ -1,0 +1,1886 @@
+﻿What is the main difference between the IN and EXISTS clause in subqueries??
+The main difference between the IN and EXISTS predicate in subquery is the way in which the query gets executed.
+
+IN -- The inner query is executed first and the list of values obtained as its result is used by the outer query.The inner query is executed for only once.
+
+EXISTS -- The first row from the outer query is selected ,then the inner query is executed and , the outer query output uses this result for checking.This process of inner query execution repeats as many no.of times as there are outer query rows. That is, if there are ten rows that can result from outer query, the inner query is executed that many no.of times.
+
+In operator test for the particular value in the subquery and exist operator is a boolean operator.so it works more efficient and faster than In operator
+
+In operaor scan all the values inside the IN block where as EXIST quit after 1st occurrence
+----------------------------------------------------------------------------------------------------------------------------------
+Global variables/parameter we can use all over the package where as local variable is for procedure or functions only
+--------------------------------------------------------------------------------------------------------------------------------
+UNION removes duplicate records (where all columns in the results are the same), UNION ALL does not.
+
+There is a performance hit when using UNION instead of UNION ALL, since the database server must do additional work to remove the duplicate rows, but usually you do not want the duplicates (especially when developing reports).
+-------------------------------------------------------------------------------------------------------------------------------------
+Below are the major differences between CASE and DECODE:
+
+DECODE is Oracle standard and CASE is ANSI standard.
+DECODE is a function where CASE is a Expression.
+CASE is Faster when compared to DECODE since DECODE is a function which takes time to load and run but the cost difference of DECODE and CASE is very very minimal.
+Both CASE and DECODE can be used in WHERE clause.
+CASE requires all return expressions to be of same base type. DECODE doesn’t. DECODE result type is first decoded expression type, all others are implicitly converted (if needed). DECODE considers two nulls to be equivalent while CASE doesn’t.
+Relational operators can’t be used in DECODE. like  decode(  sal >1000,’high’,10000,’good’,’ok’).
+CASE can be directly used in PL/SQL but DECODE can be used in PL/SQL through SQL statements only.
+CASE can work with predicates and searchable sub queries
+---------------------------------------------------------------------------------------------------------------------------------
+
+1.ref cursor in Oracle PL/SQL is much like an ordinary PL/SQL cursor in that it acts as a pointer to the result set of the cursor with which it is associated. However, the difference is that a ref cursor can be assigned to different result sets whereas a cursor is always associated with the same result set. Cursors and ref cursors are not interchangeable.
+
+2.The real purpose of ref cursors is to be able to share cursors and result sets between the client and the Oracle server or between different subroutines. For example you might open a cursor in an Oracle Forms client and then continue working with the cursor on the server or you might open a cursor in a Java program and then continue working with it in an Oracle PL/SQL stored procedure. 
+
+3.Ref cursors also come in two variants: strongly typed and weakly typed depending on how likely you are (or want to) reuse a cursor variable. Weak ref cursor types can be associated with any query whereas strong ref cursor types can only be associated with cursors of the same type.
+
+Declare 
+type rc is ref cursor; 
+
+cursor c is select * from dual; 
+
+l_cursor rc; 
+begin 
+if ( to_char(sysdate,'dd') = 30 ) then 
+open l_cursor for 'select * from emp'; 
+elsif ( to_char(sysdate,'dd') = 29 ) then 
+open l_cursor for select * from dept; 
+else 
+open l_cursor for select * from dual; 
+end if; 
+open c; 
+end; 
+/ 
+No matter how many times you run that block -- cursor C will always be select * from dual. The ref cursor can be anything. 
+Another difference is a cursor can be global -- a ref cursor cannot (you cannot define them OUTSIDE of a procedure / function) 
+Another difference is a ref cursor can be passed from subroutine to subroutine -- a cursor cannot be. 
+Another difference is that static sql (not using a ref cursor) is much more efficient then using ref cursors and that use of ref cursors should be limited to 
+- returning result sets to clients 
+- when there is NO other efficient/effective means of achieving the goal 
+that is, you want to use static SQL (with implicit cursors really) first and use a ref cursor only when you absolutely have to 
+
+Lets look at a couple of examples.
+
+DECLARE
+ TYPE wkrefcurty IS REF CURSOR;
+        -- weak ref cursor type
+ my_cur wkrefcurty;
+ dept departments%ROWTYPE;
+ BEGIN
+  OPEN my_cur FOR SELECT * FROM departments;
+  FETCH my_cur INTO dept;
+  CLOSE my_cur;
+ END;
+
+Note that despite the cursor being weakly typed, the variable to hold the results must be strongly typed. In other words you can't fetch into a variable of the weak cursor's row type.
+
+The following declaration generates a PL/SQL compilation error (PLS-00320: the declaration of the type of this expression is incomplete or malformed).
+
+DECLARE
+ TYPE wkrefcurty IS REF CURSOR;
+ my_cur wkrefcurty;
+ rslt my_cur%ROWTYPE; -- generates a PL/SQL 320 error
+ BEGIN
+  OPEN my_cur FOR SELECT * FROM departments;
+  FETCH my_cur INTO rslt;
+  CLOSE my_cur ;
+ END;
+/
+ORA-06550: line 4, column 7:
+PLS-00320: the declaration of the type of this expression is incomplete or malformed
+ORA-06550: line 4, column 7:
+PL/SQL: Item ignored
+ORA-06550: line 7, column 20:
+PLS-00320: the declaration of the type of this expression is incomplete or malformed
+ORA-06550: line 7, column 2:
+
+Also with a PL/SQL weak ref cursor if you fetch into a variable of incompatible type this causes an an exception to be raised by Oracle at run time. For example
+
+DECLARE
+ TYPE wkrefcurty IS REF CURSOR; 
+ -- weakly-typed ref cursor
+ my_cur wkrefcurty;
+ emp employees%ROWTYPE;
+BEGIN
+  OPEN my_cur FOR SELECT * FROM departments;
+  FETCH my_cur INTO emp;
+  CLOSE my_cur;
+END;
+/
+DECLARE
+*
+ERROR at line 1:
+ORA-06504: PL/SQL: Return types of Result Set variables or query do not match
+ORA-06512: at line 7
+
+In the above example we attempted to fetch a row from the departments table into a variable that matches the employee table structure. This causes Oracle to raise an exception.
+With a strong PL/SQL ref cursor type, errors like this are reported by the Oracle PL/SQL compiler at compile time, as in the following example.
+
+DECLARE
+ TYPE myrefcurty IS REF CURSOR RETURN employees%ROWTYPE; -- strong ref cursor type
+ my_cur myrefcurty;
+ emp employees%ROWTYPE;
+BEGIN
+ OPEN my_cur FOR SELECT * FROM departments; -- can't do this
+ FETCH my_cur INTO emp;
+ CLOSE my_cur;
+END;
+/
+ORA-06550: line 6, column 18:
+PLS-00382: expression is of wrong type
+ORA-06550: line 6, column 2:
+PL/SQL: SQL Statement ignored
+
+As long as the result set matches the cursor declaration we can reuse the cursor variable in our Oracle PL/SQL code for new queries as much as we like as in the following examples.
+
+Example of cursor re-use using a strongly-typed ref cursor.
+
+DECLARE
+ TYPE myrefcurty IS REF CURSOR RETURN employees%ROWTYPE; -- strong ref cursor type
+ my_cur myrefcurty;
+ emp employees%ROWTYPE;
+BEGIN
+ OPEN my_cur FOR SELECT * FROM employees; 
+ FETCH my_cur INTO emp;
+ CLOSE my_cur;
+
+ OPEN my_cur FOR 
+  SELECT * FROM employees
+  WHERE employee_id = 1; 
+ FETCH my_cur INTO emp;
+ CLOSE my_cur;
+
+ OPEN my_cur FOR 
+  SELECT * FROM employees 
+  WHERE employee_id > 1000; 
+ FETCH my_cur INTO emp;
+ CLOSE my_cur;
+
+ OPEN my_cur 
+  FOR SELECT * FROM employees 
+  WHERE department_id = 1; 
+ FETCH my_cur INTO emp;
+ CLOSE my_cur;
+
+END;
+
+The following example shows the re-use of a weakly-typed ref cursor.
+
+DECLARE
+ TYPE wkrefcurty IS REF CURSOR; 
+     -- weakly-typed ref cursor
+ my_cur wkrefcurty;
+ emp employees%ROWTYPE;
+ dept departments%ROWTYPE;
+BEGIN
+ OPEN my_cur FOR SELECT * FROM departments;
+ FETCH my_cur INTO dept;
+ CLOSE my_cur;
+
+ OPEN my_cur FOR SELECT * FROM employees;
+ FETCH my_cur INTO emp;
+ CLOSE my_cur;
+END;
+
+As mentioned earlier, we can open a ref cursor in one Oracle PL/SQL procedure and fetch from it in another as in the following example.
+
+CREATE OR REPLACE PACKAGE ref_cursor_demo IS
+ TYPE wkrefcurty IS REF CURSOR; 
+     -- weakly-typed ref cursor
+ PROCEDURE open_cursor (the_cursor OUT wkrefcurty);
+ PROCEDURE fetch_cursor (the_cursor IN OUT wkrefcurty);
+END ref_cursor_demo;
+
+CREATE OR REPLACE PACKAGE BODY 
+ref_cursor_demo IS
+
+ PROCEDURE open_cursor (the_cursor OUT wkrefcurty) IS 
+ BEGIN
+  OPEN the_cursor FOR 
+   SELECT * FROM departments
+   ORDER BY department_name DESC;
+END open_cursor;
+
+ PROCEDURE fetch_cursor (the_cursor IN OUT wkrefcurty) IS 
+  dept departments%ROWTYPE;
+BEGIN
+ FETCH the_cursor INTO dept;
+ dbms_output.put_line('1st department is '||dept.department_name);
+END fetch_cursor;
+END ref_cursor_demo;
+
+DECLARE
+ my_cur ref_cursor_demo.wkrefcurty;
+BEGIN
+ ref_cursor_demo.open_cursor(my_cur);
+ ref_cursor_demo.fetch_cursor(my_cur);
+END;
+/
+-----------------------------------------------------------------------------------------------------------------------------------------
+1.Implicit cursors are automatically created and used by Oracle every time you issue a Select statement in PL/SQL. If you use an implicit cursor, Oracle will perform the open, fetches, and close for you automatically. Implicit cursors are used in statements that return only one row. If the SQL statement returns more than one row, an error will occur.
+The process of an implicit cursor is as follows:
+Whenever an SQL statement is executed, any given PL/SQL block issues an implicit cursor, as long as an explicit cursor does not exist for that SQL statement.
+1.A cursor is automatically associated with every DML statement (UPDATE, DELETE, and INSERT).
+2.All UPDATE and DELETE statements have cursors those recognize the set of rows that will be affected by the operation.
+3.An INSERT statement requires a place to accept the data that is to be inserted in the database; the implicit cursor fulfills this need.
+4.The most recently opened cursor is called the “SQL%” Cursor.
+5.The implicit cursor is used to process INSERT, UPDATE, DELETE, and SELECT INTO statements. Oracle automatically performs the OPEN, FETCH, and CLOSE operations, during the processing of an implicit cursor.
+
+Example 1 of an Implicit cursors
+In the following PL/SQL code block, the select statement makes use of an implicit cursor:
+
+Begin
+Update emp Where 1=2;
+Dbms_output.put_line (sql%rowcount ||’ ‘|| ‘ rows are affected by the update statement’);
+End;
+SELECT SUM (sal) INTO TOTAL
+FROM emp
+WHERE depno = 10;
+
+Another Example of an Implicit cursor
+
+The following single-row query calculates and returns the total salary for a department. PL/SQL creates an implicit cursor for this statement:
+
+SELECT SUM (salary) INTO department_total
+FROM employee
+WHERE department_number = 10;
+
+An Example of PL/SQL Attribute
+
+DECLARE
+rows_deleted NUMBER;
+BEGIN
+DELETE * FROM emp;
+rows_deleted := SQL%ROWCOUNT;
+END;
+------------------------------------------------------------------------------------------------------------------------------------------
+1. Function is mainly used in the case where it must return a value. Where as a procedure may or may not return a value or may return more than one value using the OUT parameter.
+ 
+2. Function can be called from SQL statements where as procedure cannot be called from the sql statements 
+create or replace function inparam(x number)
+select inparam(empno) from emp;
+
+3. Functions are normally used for computations where as procedures are normally used for executing business logic. 
+
+4. You can have DML (insert,update, delete) statements in a function. But, you cannot call such a function in a SQL query.
+
+5. Function returns 1 value only. Procedure can return multiple values (max 1024). 
+
+---------------------------------------------------------------------------------------------------------------------------------------
+One of the nicest things about NDS is its simplicity. Unlike DBMS_SQL, which has dozens of programs and lots of rules to follow, NDS has been integrated into the PL/SQL language through the addition of one new statement, EXECUTE IMMEDIATE (which executes a specified SQL statement immediately), and through the enhancement of the existing OPEN FOR statement, allowing you to perform multiple-row dynamic queries.
+
+EXECUTE IMMEDIATE SQL_string
+   [ [ BULK COLLECT] INTO {define_variable[, define_variable]... | record}]
+   [USING [IN | OUT | IN OUT] bind_argument
+       [, [IN | OUT | IN OUT] bind_argument]...];
+	   
+1. EXECUTE IMMEDIATE will not commit a DML transaction carried out and an explicit commit should be done.
+
+If the DML command is processed via EXECUTE IMMEDIATE, one needs to explicitly commit any changes that may have been done before or as part of the EXECUTE IMMEDIATE itself. If the DDL command is processed via EXECUTE IMMEDIATE, it will commit all previously changed data.
+
+2. Multi-row queries are not supported for returning values, the alternative is to use a temporary table to store the records (see example below) or make use of REF cursors.
+
+3. Do not use a semi-colon when executing SQL statements, and use semi-colon at the end when executing a PL/SQL block.
+
+1. To run a DDL statement in PL/SQL.
+
+begin
+ execute immediate 'set role all';
+end;
+2. To pass values to a dynamic statement (USING clause).
+
+declare
+ l_depnam varchar2(20) := 'testing';
+ l_loc    varchar2(10) := 'Dubai';
+begin
+ execute immediate 'insert into dept values (:1, :2, :3)'
+   using 50, l_depnam, l_loc;
+ commit;
+end;
+
+3. To retrieve values from a dynamic statement (INTO clause).
+
+declare
+ l_cnt    varchar2(20);
+begin
+ execute immediate 'select count(1) from emp'
+   into l_cnt;
+ dbms_output.put_line(l_cnt);
+end;
+4. To call a routine dynamically: The bind variables used for parameters of the routine have to be specified along with the parameter type. IN type is the default, others have to be specified explicitly.
+
+declare
+ l_routin   varchar2(100) := 'gen2161.get_rowcnt';
+ l_tblnam   varchar2(20) := 'emp';
+ l_cnt      number;
+ l_status   varchar2(200);
+begin
+ execute immediate 'begin ' || l_routin || '(:2, :3, :4); end;'
+   using in l_tblnam, out l_cnt, in out l_status;
+
+ if l_status != 'OK' then
+    dbms_output.put_line('error');
+ end if;
+end;
+5. To return value into a PL/SQL record type: The same option can be used for %rowtype variables also.
+
+declare
+ type empdtlrec is record (empno  number(4),
+                           ename  varchar2(20),
+                           deptno  number(2));
+ empdtl empdtlrec;
+begin
+ execute immediate 'select empno, ename, deptno ' ||
+                   'from emp where empno = 7934'
+   into empdtl;
+end;
+
+6. To pass and retrieve values: The INTO clause should precede the USING clause.
+
+declare
+ l_dept    pls_integer := 20;
+ l_nam     varchar2(20);
+ l_loc     varchar2(20);
+begin
+ execute immediate 'select dname, loc from dept where deptno = :1'
+   into l_nam, l_loc
+   using l_dept ;
+end;
+
+EXECUTE IMMEDIATE is a much easier and more efficient method of processing dynamic statements than could have been possible before. As the intention is to execute dynamic statements, proper handling of exceptions becomes all the more important. Care should be taken to trap all possible exceptions.
+
+CREATE PROCEDURE insert_into_table (
+      table_name  VARCHAR2, 
+      deptnumber  NUMBER, 
+      deptname    VARCHAR2, 
+      location    VARCHAR2) IS
+   stmt_str    VARCHAR2(200);
+
+BEGIN
+   stmt_str := 'INSERT INTO ' || 
+      table_name || ' values 
+      (:deptno, :dname, :loc)';
+
+   EXECUTE IMMEDIATE stmt_str 
+      USING 
+      deptnumber, deptname, location;
+
+END;
+/
+
+DECLARE
+  TYPE EmpCurTyp IS REF CURSOR;
+  cur EmpCurTyp;
+  stmt_str VARCHAR2(200);
+  name VARCHAR2(20);
+  salary NUMBER;
+BEGIN
+  stmt_str := 'SELECT ename, sal FROM emp 
+    WHERE job = :1';
+  OPEN cur FOR stmt_str USING 'SALESMAN'; 
+
+LOOP
+  FETCH cur INTO name, salary; 
+  EXIT WHEN cur%NOTFOUND; 
+  -- <process data>  
+END LOOP; 
+CLOSE cur;
+END;
+/
+DECLARE
+  stmt_str VARCHAR2(200);
+  deptnumber NUMBER := 99;
+  deptname VARCHAR2(20);
+  location VARCHAR2(10);
+BEGIN
+  stmt_str := 'INSERT INTO dept_new VALUES  
+  (:deptno, :dname, :loc)';
+  EXECUTE IMMEDIATE stmt_str 
+    USING deptnumber, deptname, location;
+END;
+/
+DECLARE 
+  deptname_array dbms_sql.Varchar2_Table; 
+  stmt_str  VARCHAR2(200);
+  location  VARCHAR2(20);
+  deptnumber NUMBER := 10;
+  deptname   VARCHAR2(20);
+BEGIN
+  stmt_str := 'UPDATE dept_new 
+    SET loc = :newloc
+    WHERE deptno = :deptno
+    RETURNING dname INTO :dname';
+  EXECUTE IMMEDIATE stmt_str 
+    USING location, deptnumber, OUT deptname;
+END;
+/
+---------------------------------------------------------------------------------------------------------------------------
+Autonomous Transactions:
+------------------------------------------
+The easiest way to understand autonomous transactions is to see them in action.
+
+CREATE TABLE at_test (
+      id            NUMBER      NOT NULL,
+     description  VARCHAR2(50)  NOT NULL
+   );
+
+INSERT INTO at_test (id, description) VALUES (1, 'Description for 1');
+INSERT INTO at_test (id, description) VALUES (2, 'Description for 2');
+
+SELECT * FROM at_test;
+
+        ID DESCRIPTION
+---------- --------------------------------------------------
+         1 Description for 1
+         2 Description for 2
+
+2 rows selected.
+
+
+Next, we insert another 8 rows using an anonymous block declared as an autonomous transaction, which contains a commit statement.
+
+DECLARE
+  PRAGMA AUTONOMOUS_TRANSACTION;
+BEGIN
+  FOR i IN 3 .. 10 LOOP
+    INSERT INTO at_test (id, description)
+    VALUES (i, 'Description for ' || i);
+  END LOOP;
+  COMMIT;
+END;
+/
+
+PL/SQL procedure successfully completed.
+
+SELECT * FROM at_test;
+
+        ID DESCRIPTION
+---------- --------------------------------------------------
+         1 Description for 1
+         2 Description for 2
+         3 Description for 3
+         4 Description for 4
+         5 Description for 5
+         6 Description for 6
+         7 Description for 7
+         8 Description for 8
+         9 Description for 9
+        10 Description for 10
+
+10 rows selected.
+
+As expected, we now have 10 rows in the table. If we now issue a rollback statement we get the following result.
+
+ROLLBACK;
+SELECT * FROM at_test;
+
+        ID DESCRIPTION
+---------- --------------------------------------------------
+         3 Description for 3
+         4 Description for 4
+         5 Description for 5
+         6 Description for 6
+         7 Description for 7
+         8 Description for 8
+         9 Description for 9
+        10 Description for 10
+
+8 rows selected.
+
+The 2 rows inserted by our current session (transaction) have been rolled back, while the rows inserted by the autonomous transactions remain. 
+The presence of the PRAGMA AUTONOMOUS_TRANSACTION compiler directive made the anonymous block run in its own transaction, so the internal commit statement did not affect the calling session.
+-------------------------------------------------------------------------------------------------------------------------------------------
+Clustering : 
+
+It is a mechanism to bind the data together.. to achieve clustering clusters are used...
+
+syntax for creating a cluster :
+
+create cluster <cluster_name>
+( cluster_column <data_type>  )
+
+ex :
+create cluster deptno_cluster
+( deptno number );
+
+Syntax for Creating a cluster Table :
+
+create table <table_name>
+(
+column_name <data_type>,
+.
+.
+cluster_column <data_type>
+)cluster cluster_name( cluster_column )
+
+create table emp_cluster_tab
+(
+empno number,
+ename varchar2(10),
+sal number,
+deptno number
+)cluster deptno_cluster( deptno )
+
+Note : Cluster tables cant be used before indexing the cluster...
+
+Indexes : 
+
+Usage : It is used for improving the performance of retrieval of data whenever the search condition is specified is an indexed column..
+
+syntax :
+
+create index <index_name>
+on table table_name( column_name )
+
+create index ename_ind on table emp( ename )
+
+select * from emp where ename = 'SMITH'
+
+Rules for using Indexes :
+
+* Table should contain more than 20000 records
+
+* Table row's should be large with more no. of null values in a column..
+
+* If the table's data is more and only 2-4% of its data should be retrieved
+
+* If a column is very frequently used in a where or join condition.. 
+
+Note :
+* The info. about the indexes can be retrieved from user_indexes..
+
+select * from user_indexes where index_name like 'ENAME_IND'
+
+* To retrieve the info. about the columns on which indexes are defined can be retrieved from user_ind_columns..
+
+select column_name from user_ind_columns
+where table_name = 'EMP';
+
+unique index : If a column is defined with an unique index then it will implictly define an unique constraint on that column..
+
+syntax :
+create unique index <index_name>
+on table table_name( column )
+
+create unique index eno_ind on emp( empno )
+
+Cluster Index : To index a cluster it is used..
+syntax :
+create index <index_name>
+on cluster cluster_name;
+
+create index deptno_cluster_index
+on cluster deptno_cluster;
+
+
+insert into emp_cluster_tab
+values( 101,'sekhar',15000,10 );
+
+select * from emp_cluster_tab;
+
+Note :
+* The information about the clusters can be retrieved from user_clusters..
+***********************************************************************************************************************************
+
+How is data stored in a database?
+
+Logically: data is stored in columns/fields which form records which form tables which form schemas which form databases.
+Physically: data is stored in files on disk. Each database will have their own file format which is optimized for reading and writing.
+
+isolation levels
+
+An isolation level determines how data is locked or isolated from other processes while the data is being accessed. The isolation level will be in effect for the duration of the unit of work. Applications that use a cursor declared with a DECLARE CURSOR statement using the WITH HOLD clause will keep the chosen isolation level for the duration of the unit of work in which the OPEN CURSOR was performed. DB2® supports the following isolation levels:
+Repeatable Read
+Read Stability
+Cursor Stability
+Uncommitted Read.
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+The differences between the clustered and non clustered index in SQL are :
+
+Clustered index is used for easy retrieval of data from the database and its faster whereas reading from non clustered index is relatively slower.
+Clustered index alters the way records are stored in a database as it sorts out rows by the column which is set to be clustered index whereas in a non clustered index, it does not alter the way it was stored but it creates a separate object within a table which points back to the original table rows after searching.
+One table can only have one clustered index whereas it can have many non clustered index.
+-------------------------------------------------------------------------------------------------------------------------------------------------
+What is the difference between the Rollup and Cube functions in Oracle?
+
+These two functions are used to calculate grand total. and these two functions are applied with group by clause.
+rollup() function gives sum(sal) from each department wise and grand total of all departments, but doesn’t give sum(sal) from each job.
+
+cube gives sum(sal) from each department and job wise also. means( what is total salary of analysts, clerk, manager, salesman, and president).
+
+rollup() function. it gives total sal of each department and grand total of all departments 
+cube() function. it gives total sal of each department and grand total of all departments and total sal of each job.
+
+cube,rollup and grouping_id mainly used in reporting purposes
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+GROUPING_ID function
+The GROUPING_ID function computes the GROUP BY level of a particular row.
+
+The GROUPING_ID function returns a single number that enables you to determine the exact GROUP BY level. For each row, GROUPING_ID takes the set of 1's and 0's that would be generated if you used the appropriate GROUPING functions and concatenated them, forming a bit vector. The bit vector is treated as a binary number, and the number's base-10 value is returned by the GROUPING_ID function.
+
+GROUPING_ID returns a number corresponding to the GROUPING bit vector associated with a row. GROUPING_ID is applicable only in a SELECT statement that contains a GROUP BY extension, such as ROLLUP or CUBE, and a GROUPING function. In queries with many GROUP BY expressions, determining the GROUP BY level of a particular row requires many GROUPING functions, which leads to cumbersome SQL. GROUPING_ID is useful in these cases.
+
+GROUPING_ID is functionally equivalent to taking the results of multiple GROUPING functions and concatenating them into a bit vector (a string of ones and zeros). By using GROUPING_ID you can avoid the need for multiple GROUPING functions and make row filtering conditions easier to express. Row filtering is easier with GROUPING_ID because the desired rows can be identified with a single condition of GROUPING_ID = n. The function is especially useful when storing multiple levels of aggregation in a single table.
+
+SELECT channel_id, promo_id, sum(amount_sold) s_sales,
+   GROUPING(channel_id) gc,
+   GROUPING(promo_id) gp,
+   GROUPING_ID(channel_id, promo_id) gcp,
+   GROUPING_ID(promo_id, channel_id) gpc
+   FROM sales
+   WHERE promo_id > 496
+   GROUP BY CUBE(channel_id, promo_id);
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+What is the difference between a oracle global index and a local index?
+
+Answer:  When using Oracle partitioning, you can specify the "global" or "local" parameter in the create index syntax:
+
+Global Index:  A global index is a one-to-many relationship, allowing one index partition to map to many table partitions.  The docs says that a "global index  can be partitioned by the range or hash method, and it can be defined on any type of partitioned, or non-partitioned, table".
+
+Local Index: A local index is a one-to-one mapping between a index partition and a table partition.  In general, local indexes allow for a cleaner "divide and conquer" approach for generating fast SQL execution plans with partition pruning.
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Why do bind variables matter for performance?
+
+Before Oracle runs a SQL statement it checks it's valid and determines how to access the tables and join them together. This is called parsing. The optimizer has the task of figuring out which table access and join methods to use. This produces an execution plan. When Oracle sends a statement to the optimizer to do this it's called a hard parse.
+
+If a plan already exists for a query, Oracle doesn't need to go through the optimization process again. It can reuse the existing plan. This is referred to as soft parsing.
+
+In a hard parse, the SQL statement needs to be parsed, checked for syntax errors, checked for correctness of table names and column names, and optimized to find the best execution plan.
+In a soft parse, the SQL statement already exists in a shared pool, so very little processing is required for access rights and session verification.
+Using bind variables enables soft parsing, which means that less processing time is spent on choosing an optimized execution plan. Information about how to process the SQL statement has been saved, along with the SQL statement itself, in a shared pool.
+
+There are distinct performance advantages to using bind variables. For one, holding many similar but unique SQL statements in a shared pool is a waste of memory; writing one statement with interchangeable variables is more efficient. It is also time-consuming to parse SQL statements. Reducing the number of hard parses minimizes CPU usage.
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+---difference b/w where and having clause
+1. WHERE clause specifies search conditions for the rows returned by the Query and limits rows to a meaningful set.
+
+2. GROUP BY clause works on the rows returned by the previous step #1. This clause summaries identical rows into a single/distinct group and returns a single row with the summary for each group, by using appropriate Aggregate function in the SELECT list, like COUNT(), SUM(), MIN(), MAX(), AVG(), etc.
+
+3. HAVING clause works as a Filter on top of the Grouped rows returned by the previous step #2. This clause cannot be replaced by a WHERE clause and vice-versa.
+
+example:  SELECT CustomerID, COUNT(*) AS OrderNos
+FROM [Sales].[SalesOrderHeader]
+WHERE OrderDate >= '2014-01-01 00:00:00.000'
+AND OrderDate < '2015-01-01 00:00:00.000'
+GROUP BY CustomerID
+
+---execute vs sp_execute
+
+Benefits of sp_ExecuteSQL
+As we have discussed above sp_ExecuteSQL allows parametrization of the T-SQL string and so it’s better to use it over EXEC to avoid SQL injection. Another benefit of using sp_ExecuteSQL is the reuse of execution plan if only change is in parameter values. It’s better to use sp_ExecuteSQL also because we don’t need to type cast the parameter values in string too.
+
+–> EXECUTE:
+As per MS BOL EXECUTE executes a command string or character string within a TSQL batch, or one of the following modules: system stored procedure, user-defined stored procedure, scalar-valued user-defined function, or extended stored procedure. The TSQL query can be a direct string or a variable of char, varchar, nchar, or nvarchar data type.
+
+–> sp_executesql:
+As per MS BOL sp_executesql executes a TSQL statement or batch that can be reused many times, or one that has been built dynamically. The TSQL statement or batch can contain embedded parameters. The SQL query is a Unicode string or a Unicode variable that contains a Transact-SQL statement or batch. Here the variable datatype is restricted to Unicode nchar or nvarchar only. If a Unicode constant (SQL string) is used then the it must be prefixed with N.
+
+–> Main difference performance wise: sp_executesql is generally preferred over EXEC() when executing dynamic T-SQL. sp_executesql works by creating a stored procedure using the specified query, then calling it using the supplied parameters. Unlike EXEC(), sp_executesql provides a mechanism that allows you to parameterize dynamic T-SQL and encourage plan reuse. A dynamic query that is executed using sp_executesql has a much better chance of avoiding unnecessary compilation and resource costs than one ran using EXEC().
+
+--SQL Injection
+SQL injection is an attack in which malicious code is inserted into strings that are later passed to an instance of SQL Server for parsing and execution. Any procedure that constructs SQL statements should be reviewed for injection vulnerabilities because SQL Server will execute all syntactically valid queries that it receives. Even parameterized data can be manipulated by a skilled and determined attacker.
+
+--difference between function and procedure
+–> Stored Procedures (SP):
+– Can be used to read and modify data.
+– To run an SP Execute or Exec is used, cannot be used with SELECT statement.
+– Cannot JOIN a SP in a SELECT statement.
+– Can use Table Variables as well as Temporary Tables inside an SP.
+– Can create and use Dynamic SQL.
+– Can use transactions inside (BEGIN TRANSACTION, COMMIT, ROLLBACK) an SP.
+– Can use used with XML FOR clause.
+– Can use a UDF inside a SP in SELECT statement.
+– Cannot be used to create constraints while creating a table.
+– Can execute all kinds of functions, be it deterministic or non-deterministic.
+ 
+
+–> Functions (UDF):
+– Can only read data, cannot modify the database.
+– Can only be used with SELECT statement, JOINS & APPLY (CROSS & OUTER).
+– Can JOIN a UDF in a SELECT statement.
+– Cannot use a Temporary Table, only Table Variables can be used.
+– Cannot use a Dynamic SQL inside a UDF.
+– Cannot use transactions inside a UDF.
+– Cannot be used with XML FOR clause.
+– Cannot execute an SP inside a UDF.
+– Can be used to create Constraints while creating a table.
+– Cannot execute some non-deterministic built-in functions, like GETDATE().
+
+Function VS Procedure
+- Functions are typically used to return table variables. Stored procedures cant return table variables however, can create tables.
+- A procedure may or may not return multiple values. A function cannot return more than one value and has to return at least one value.
+- A function can only have IN parameters while stored procedures can have IN, OUT and INOUT parameters.
+Function VS Procedure
+- A FUNCTION always returns a value using the return statement while a PROCEDURE may return one or more values through parameters or may not return at all.
+- Functions can be used in select or update or delete statement while procedure can't.'
+- Functions are normally used for computations where as procedures are normally used for executing business logic.
+- Stored procedure is precompiled execution plan where as functions are not.
+
+Independent execution
+
+A function doesn’t execute independently. It has to be a part of the executable statement.
+Inside an SQL query (E.g. Select function_name(parameters) from dual)
+Using assignment variables (E.g. var := function_name(parameters); )
+
+A procedure itself represents an executable statement, so it can run independently.
+Using Execute command ( E.g. Execute procedure_name(parameters); )
+Calling procedures (E.g. procedure_name(parameters);)
+
+--standalone procedure vs procedure
+Procedure is a named PL/SQL block tht is stored in the database.
+Package is a collection of functions and procedures stored within the database. 
+Pkg consists of 2 parts 
+1. Specification - declares types,functions,procedures,exceptions,cursors
+2. Body - implements the specification
+Whenevr a func/proc is referenced from the pkg thn the entire pkg is loaded in the memory so tht whn a diff func from the same pkg is referenced thn its already there in the memory
+
+1. Procedure Overloading and Function Overloading Possible in Package. This  Overloading Concept Not Possible in Procedure.
+2. Variables in Package we Can use as a Global Variables. its Not Possible in Procedure.
+
+Stand Alone Procedure: A procedure which is not enclosed in a package is called Stand Alone Procedure.
+Stored Procedure: A Procedure which is defined in Package is called Stored Procedure and if we want to call that procedure out of package is to use <PKG Name>.<Procedure Name>
+
+Stand Alone Proc: Block of PLSQL code but not defined in the data dictionary, hence not reusable
+Stored Procedure: Block of PLSQL code Defined in data dictionary, implements reusability. Check in user_source table
+
+
+--delete vs truncate vs drop
+–> DELETE: (MSDN)
+
+1. Removes Some or All rows from a table.
+
+2. A WHERE clause can be used to remove some rows. If no WHERE condition is specified, all rows will be removed.
+
+3. Causes all DELETE triggers on the table to fire.
+
+4. It removes rows row-by-row one at a time and records an entry in the Transaction logs, thus is slower than TRUNCATE.
+
+5. Every deleted row in locked, thus it requires more number of locks and database resources.
+
+6. According to MS BOL, if a table is a Heap or no Clustered index is defined than the row-pages emptied are not de-allocated instantly and remain allocated in the heap. Thus, no other object can reuse this associated space. Thus to de-allocate the space a Clustered index is required or TABLOCK hint should be applied in the DELETE statement.
+
+7. This is a DML command as it is just used to manipulate/modify the table data. It does not change any property of a table.
+
+ 
+–> TRUNCATE: (MSDN)
+
+1. Removes All rows from a table.
+
+2. Does not require a WHERE clause, so you can not filter rows while Truncating.
+
+3. With SQL Server 2016 you can Truncate a Table Partition, for more details check [here].
+
+4. IDENTITY columns are re-seeded on this operation, if no seed was defined then the default value 1 is used.
+
+5. No Triggers are fired on this operation because it does not operate on individual rows.
+
+6. It de-allocates Data Pages instead of Rows and records Data Pages instead of Rows in Transaction logs, thus is faster than DELETE.
+
+7. While de-allocating Pages it locks Pages and not Rows, thus it requires less number of locks and few resources.
+
+8. TRUNCATE is not possible when a table:
+a. is reference by a Foreign Key or tables used in replication or with Indexed views.
+b. participates in an Indexed/Materialized View.
+c. published by using Transactional/Merge replication.
+
+9. This is a DDL command as it resets IDENTITY columns, de-allocates Data Pages and empty them for use of other objects in the database.
+
+Note: It is a misconception among some people that TRUNCATE cannot be roll-backed. But in reality both DELETE and TRUNCATE operations can be COMMITTED AND ROLL-BACKED if provided inside a Transaction. The only method to Rollback a committed transaction after DELETE/TRUNCATE is to restore the last backup and run transactions logs till the time when DELETE/TRUNCATE is about to happen.
+
+ 
+–> DROP: (MSDN)
+
+1. The DROP TABLE command removes one or more table(s) from the database.
+
+2. All related Data, Indexes, Triggers, Constraints, and Permission specifications for the Table are dropped by this operation.
+
+3. Some objects like Views, Stored Procedures that references the dropped table are not dropped and must be explicitly dropped.
+
+4. Cannot drop a table that is referenced by any Foreign Key constraint.
+
+5. According to MS BOL, Large tables and indexes that use more than 128 extents are dropped in two separate phases: Logical and Physical. In the Logical phase, the existing allocation units used by the table are marked for de-allocation and locked until the transaction commits. In the physical phase, the IAM pages marked for de-allocation are physically dropped in batches.
+
+
+---why bitmap index is used in datawarehousing
+When you index a field in a RDBMS table, you can create one of two types of indices: 1) B-Tree and 2) Bitmap. Both of these are data structures on how the indices are stored.
+
+1) a B-Tree stores the indexed values in a balanced tree. This makes insert/update/delete elements of the tree O(log n) per row run-time complexity with O(n) on storage space. Since you will make inserts/updates often in a Data Warehouse and storage grows pretty fast (think big data), B-Tree is a good overall solution.
+
+B-tree
+
+2) A Bitmap index creates a matrix of all possible values of a field with every row of that field. In this matrix, a value of 1 or 0 is stored, the value is a 1 if the value of this database field = the value of the matrix column.
+
+i.e.: Let’s say I have a field called gender in my employee table, possible values are male, female, unknown.
+
+Let’s say there are 4 employees, Bob, John, Jenny, Uber.
+
+The Bitmap index will look like this:
+
+male | female | unknown
+
+Bob 1 | 0 | 0
+
+Jenny 0 | 1 | 0
+
+John 1 | 0 | 0
+
+Uber 0 | 0 | 1
+
+That is a Bitmap index. When the index gets activated (i.e. you want all female employees), the database engine will only look into the female column of the bitmap and return rows that = 1. This is much faster compared to a B-tree whereas you have to traverse the tree, find the node, compare all letters of the gender field to realize yes indeed Bob is a male.
+
+For n rows in the table, Bitmap has a run time complexity of O(n), as it only searches once per row. For a B-tree, it’s O(n log n) as traversing the B-Tree is O(log n) per row, then there are n rows to search through.
+
+Unfortunately, you can see that if I have a million rows, I will have 3 x 1 million values in the Bitmap index, whereas the B-tree will have only 1 million (it’s O (n)). If I use this on a field with 50 different values, I will have 50 million values that needs to be stored while the B-tree will still have 1 million.
+
+Bitmap indices are not recommended for use on fields with large number of unique values.
+
+Thus you can see, this has absolutely NOTHING to do with whether or not you know in advance which fields will be used in a where clause.
+
+The reason why Bitmap indices are used in DW is that, in DW, you can (and should) create supporting fields to make things easier to query. For example, if the users ask a lot of common questions like did this employee meet bench mark? Did this sale have partial / full returns? You would create fields such as IS_ABOVE_BENCH_MARK or IS_REFUNDED; where the values of those fields are 1 or 0. So when you query, you will just say IS_ABOVE_BENCH_MARK = 1, give bonus…or something like that.
+
+This means all these fields can have a Bitmap index on them, because YOU are controlling the values to be limited (yes, it’s a bitmap index on a bit field).
+
+This is just an rough idea, as ideas of index can get very complicated (such as how do you link the value to the row? What does a B-Tree index on multiple fields look like and how does that work where I don’t have all fields in the query?). It gets messy.
+
+Performance* thought this is debatable [1].
+
+*Where the majority of tables consist of fields that have low cardinality i.e. a limited set of distinct values. For example, fields like IsSmoker, IsMarried, etc. → Y/N or fields like Gender → M/F/U.
+
+----higher watermark
+High-water Mark 
+
+This is a term used with table segments stored in the database. If you envision a table, for example, as a 'flat' structure or as a series of blocks laid one after the other in a line from left to right, the high-water mark (HWM) would be the rightmost block that ever contained data, as illustrated in Figure 10-1. 
+
++---- high water mark of newly created table
+|
+V
++--------------------------------------------------------+
+|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
++--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+
+      high water mark after inserting 10,000 rows
+                                    |
+                                    v
++--------------------------------------------------------+
+|x |x |x |x |x |x |x |x |x |x |x |x |  |  |  |  |  |  |  |
+|x |x |x |x |x |x |x |x |x |x |x |x |  |  |  |  |  |  |  |
++--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+
+
+      high water mark after inserting 10,000 rows
+                                    |
+                                    v
++--------------------------------------------------------+
+|x |x |x |x |x |x |x |  |  |  |  |  |  |  |  |  |  |  |  |
+|x |x |x |x |x |x |x |  |  |  |  |  |  |  |  |  |  |  |  |
++--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+
+Figure 10-1. Depiction of an HWM 
+
+Figure 10-1 shows that the HWM starts at the first block of a newly created table. As data is placed into the table over time and more blocks get used, the HWM rises. If we delete some (or even all) of the rows in the table, we might have many blocks that no longer contain data, but they are still under the HWM, and they will remain under the HWM until the object is rebuilt, truncated, or shrunk (shrinking of a segment is a new Oracle 10g feature that is supported only if the segment is in an ASSM tablespace). 
+
+The HWM is relevant since Oracle will scan all blocks under the HWM, even when they contain no data, during a full scan. This will impact the performance of a full scan¿especially if most of the blocks under the HWM are empty. To see this, just create a table with 1,000,000 rows (or create any table with a large number of rows), and then execute a SELECT COUNT(*) from this table. Now, DELETE every row in it and you will find that the SELECT COUNT(*) takes just as long (or longer, if you need to clean out the block! Refer to the 'Block Cleanout' section of Chapter 9) to count 0 rows as it did to count 1,000,000. This is because Oracle is busy reading all of the blocks below the HWM to see if they contain data. You should compare this to what happens if you used TRUNCATE on the table instead of deleting each individual row. TRUNCATE will reset the HWM of a table back to 'zero' and will truncate the associated indexes on the table as well. If you plan on deleting every row in a table, TRUNCATE¿if it can be used¿would be the method of choice for this reason. 
+
+--referential integrity
+it is essential to guarantee that a foreign key always refers to a record which exists in the other table. This is known as referential integrity.
+
+Example: If "New Delhi Branch" is a branch name appearing in one of the tuples in the account relation, then there exists a tuple in the branch relation for branch "New Delhi Branch".
+
+Referential integrity is usually enforced by the combination of a primary key and a foreign key. For referential integrity to hold, any field in a table that is declared a foreign key can contain only values from a parent tables primary key field.
+
+Referential integrity is a feature provided by relational database management systems (RDBMS’s) that prevents users or applications from entering inconsistent data.
+
+Referential integrity is a database constraint that ensures that references between data are indeed valid and intact.
+
+The main objective of Referential integrity is to maintain data of the two base relations in consistent state during tuple insertion, deletion and modification.
+
+Example of Referential Integrity
+
+The SQL statement defining the parent table, DEPARTMENT, is:
+
+CREATE TABLE DEPARTMENT
+      (DEPTNO    CHAR(3)     NOT NULL,
+       DEPTNAME  VARCHAR(29) NOT NULL,
+       MGRNO     CHAR(6),
+       ADMRDEPT  CHAR(3)     NOT NULL,
+       LOCATION  CHAR(16),
+          PRIMARY KEY (DEPTNO))
+   IN RESOURCE 
+
+The SQL statement defining the dependent table, EMPLOYEE, is:
+
+CREATE TABLE EMPLOYEE
+      (EMPNO     CHAR(6)     NOT NULL PRIMARY KEY,
+       FIRSTNME  VARCHAR(12) NOT NULL,
+       LASTNAME  VARCHAR(15) NOT NULL,
+       WORKDEPT  CHAR(3),
+       PHONENO   CHAR(4),
+       PHOTO     BLOB(10m)   NOT NULL,
+          FOREIGN KEY DEPT (WORKDEPT)
+          REFERENCES DEPARTMENT ON DELETE NO ACTION)
+   IN RESOURCE 
+
+By specifying the DEPTNO column as the primary key of the DEPARTMENT table and WORKDEPT as the foreign key of the EMPLOYEE table, you are defining a referential constraint on the WORKDEPT values. This constraint enforces referential integrity between the values of the two tables. In this case, any employees that are added to the EMPLOYEE table must have a department number that can be found in the DEPARTMENT table. 
+
+Oracle delete from tables with referential integrity
+Experts,
+I have 3 tables say a, b and c. table a has the primary key 'a_id' and table b has the primary key 'b_id' and also foreign key from table a as 'a_id'. Table c has the primary key 'c_id' and the foreign key from table b which is 'b_id'. 
+If I want to delete a record from table a which has child record in table b and the child record in table b has a child record in table c.
+
+If you set the constraints to cascade on delete, then a single delete will remove all the children as well.
+
+********************************************************************************************************************************************************************************************************
+****************************************************
+What is the difference between 10g and 11g?
+
+Compared with 10g, 11g provides more simplified, improved and automated memory management and better ability to diagnose faults through inbuilt infrastructure to prevent, detect, diagnose, and help resolve critical database errors, as well as, low database performance issues. It provides invisible indexes, virtual columns, table partitioning and the ability to redefine tables which have materialized view logs whilst online. A major difference in the two are the new security features found in 11g such as better password-based authentication with mixed case passwords, encryption on tablespace-level and enhancements for data pump encryption and compression.
+
+Advantages of Invisble Indexes
+Invisible indexes can help to a great extent, in testing scenarios where the optimizer behavior needs to be tested without the index. This does not need dropping and recreating the index.
+Indexes can be created for certain adhoc queries (queries that are fired very infrequently) and can be made invisible after the usage.
+However, invisible indexes behave the same like a normal index towards the DML operations. They need to be updated with each DML operation.
+
+virtual coloumns: As the name suggests, Oracle introduced the concept of defining columns on a table that will actually not store values. Instead, it is uses an expression based on other columns in the same table. A very interesting concept.
+
+Although these virtual columns appear as normal columns of the table when queried, they are actually not physically stored in the table. Instead, derived from data in the other columns of the table using expressions or functions.
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+﻿----optimizing plsql performance
+Profiling, Tracing, Debugging Using Oracle Supplied Packages
+DBMS_PROFILER-> Analyze each program statement,Collect runtime statistics
+DBMS_TRACE->Trace program and subprogram execution steps,Collect runtime statistics
+DBMS_HPROF->Hierarchical Profiler,Analyze SQL and PL/SQL statements separately,Generate HTML Reports
+DBMS_DEBUG->Debug server side code,The PLSQL_DEBUG parameter,Using the COMPILE DEBUG option,Setting breakpoints,Analyzing variables
+-------------------------------------------
+TUNE ACCESS TO CODE AND DATA IN THE SGA
+Before your code can be executed (and perhaps run too slowly), it must be loaded into the SGA of the Oracle instance. 
+Use the most aggressive compiler optimization level possible
+Oracle Database 10g introduced an optimizing compiler for PL/SQL programs. The default optimization level of 2 in that release took the most aggressive approach possible in terms of transforming your code to make it run faster oracle Database 11g and later support an even higher optimization level of 3
+DBMS_PROFILER
+This built-in package allows you to turn on execution profiling in a session. Then, when you run your code, the Oracle database uses tables to keep track of detailed information about how long each line in your code took to execute
+DBMS_HPROF (hierarchical profiler)
+Oracle Database 11g introduced a hierarchical profiler that makes it easier to roll performance results up through the execution call stack. DBMS_PROFILER provides “flat” data about performance, which makes it difficult to answer questions like “How much time altogether is spent in the ADD_ITEM procedure?” The hierarchical profiler makes it easy to answer such questions.
+-------------------
+PROFILING means :identifying the queries that have the longest duration.understand where their code is spending the most time, so they can detect and optimize it. The profiling utility allows Oracle to collect data in memory structures and then dumps it into tables as application code is executed.
+
+TRACING : Oracle Trace includes: SQL statements and statistics on the frequency, duration, and resources used for all parse, execution, and fetch events; Execution plan details; Logical and physical database transactions, including the frequency, duration, and resources used by ..
+
+DBMS_PROFILER package which is used to trace run time behavior the PL/SQL code. It is not gives any solution to the poor performance PL/SQL code. It is not inbuilt package i.e., this package is not available in default oracle installation. we need to install this package separately.
+DBMS_PROFILER
+To use the profiler in the old mode, you must first run the script proftab.sqlin the schema used to execute your procedure / function. This script creates the following tables:
+
+PLSQL_PROFILER_RUNS list all the executions of the profiler
+colms available: runid ,related_run ,run_owner ,run_date ,run_comment ,run_total_time 
+PLSQL_PROFILER_UNITS list all measured threads
+PLSQL_PROFILER_DATA stores the details of information stored by thread
+
+grant execute on DBMS_PROFILER to demo;<br /><br />connect demo/demo<br />@?/rdbms/admin/proftab.sql
+
+grant execute on DBMS_PROFILER to demo;<br /><br />connect demo/demo<br />@?/rdbms/admin/proftab.sql
+
+Use DBMS_PROFILER requires to use the same session as the activation; this is not usually a problem since you can add the code in the header / end of a PL / SQL procedure or via a login / logout trigger. In the example below we just run the profiling before launching our code and disable it (writes the data in the reference tables) once the procedure is executed:
+Points to remember:
+
+1) Profiler is needed to setup all development schemas. If we setup the profiler in system schema only, we cannot use this.
+
+2) Total time is mentioned in nanoseconds. We will convert nanoseconds into seconds using run_toal_time/1000000000.
+-------------------------
+DBMS_HPROF
+DBMS_HPROF resumes for a lot of the previous operation. To start, you will need to run the script dbmshptab.sql that contains the creation of the tables:
+
+DBMSHP_RUNS contains information about executions
+DBMSHP_FUNCTION_INFO contains the runtime elements
+DBMSHP_PARENT_CHILD_INFO stores the details of the information stored per execution unit resulting from the analysis operation
+
+As for DBMS_PROFILER, you must use the same session for the procedure and activation; the same possibilities of triggers or encapsulation are to be implemented for a capture in production. Note that in this case, the data is stored as a trace file that can later be used without the tables DBMSHP_FUNCTION_INFOand DBMSHP_PARENT_CHILD_INFOare fed. The documentation describes in some detail the format of this trace file :
+At this moment, you have 2 options:
+either, generate all the elements of your report and query the tables described previously:
+or, use the utility provided to extract all of this information as HTML files. Here is an example of use:
+--------------------------
+The DBMS_TRACE package provides an API to allow the actions of PL/SQL programs to be traced. The scope and volume of the tracing is user configurable. This package can be used in conjunction with the DBMS_PROFILER package to identify performance bottlenecks.
+The first step is to install the tables which will hold the trace data. @$ORACLE_HOME/rdbms/admin/tracetab.sql
+-----increasing performance by bulkcollect,forall
+What is BULK COLLECT?
+BULK COLLECT reduces context switches between SQL and PL/SQL engine and allows SQL engine to fetch the records at once.
+
+Oracle PL/SQL provides the functionality of fetching the records in bulk rather than fetching one-by-one. This BULK COLLECT can be used in 'SELECT' statement to populate the records in bulk or in fetching the cursor in bulk. Since the BULK COLLECT fetches the record in BULK, the INTO clause should always contain a collection type variable. The main advantage of using BULK COLLECT is it increases the performance by reducing the interaction between database and PL/SQL engine.
+
+SELECT <columnl> BULK COLLECT INTO bulk_varaible FROM <table name>;  --In the above syntax, BULK COLLECT is used in collect the data from 'SELECT' and 'FETCH' statement.
+FETCH <cursor_name> BULK COLLECT INTO <bulk_varaible >;
+
+FORALL Clause
+The FORALL allows to perform the DML operations on data in bulk. It is similar to that of FOR loop statement except in FOR loop things happen at the record-level whereas in FORALL there is no LOOP concept. Instead the entire data present in the given range is processed at the same time.
+
+Syntax:
+
+FORALL <loop_variable>in<lower range> .. <higher range> 
+
+<DML operations>;
+In the above syntax, the given DML operation will be executed for the entire data that is present between lower and higher range.
+
+LIMIT Clause
+The bulk collect concept loads the entire data into the target collection variable as a bulk i.e. the whole data will be populated into the collection variable in a single-go. But this is not advisable when the total record that needs to be loaded is very large, because when PL/SQL tries to load the entire data it consumes more session memory. Hence, it is always good to limit the size of this bulk collect operation.
+Syntax:
+
+FETCH <cursor_name> BULK COLLECT INTO <bulk_variable> LIMIT <size>;
+
+BULK COLLECT Attributes
+Similar to cursor attributes BULK COLLECT has %BULK_ROWCOUNT(n) that returns the number of rows affected in the nth DML statement of the FORALL statement, i.e. it will give the count of records affected in the FORALL statement for every single value from the collection variable. The term 'n' indicates the sequence of value in the collection, for which the row count is needed.
+
+FOR i IN l_array.first .. l_array.last LOOP
+    DBMS_OUTPUT.put_line('Element: ' || RPAD(l_array(i), 15, ' ') ||
+      ' Rows affected: ' || SQL%BULK_ROWCOUNT(i));
+  END LOOP;
+  
+Example 1: In this example, we will project all the employee name from emp table using BULK COLLECT and we are also going to increase the salary of all the employees by 5000 using FORALL.
+DECLARE
+CURSOR guru99_det IS SELECT emp_name FROM emp;
+TYPE lv_emp_name_tbl IS TABLE OF VARCHAR2(50);
+lv_emp_name lv_emp_name_tbl;
+BEGIN
+OPEN guru99_det;
+FETCH guru99_det BULK COLLECT INTO lv_emp_name LIMIT 5000;
+FOR c_emp_name IN lv_emp_name.FIRST .. lv_emp_name.LAST
+LOOP
+Dbms_output.put_line(‘Employee Fetched:‘||c_emp_name);
+END LOOP:
+FORALL i IN lv_emp_name.FIRST .. lv emp_name.LAST
+UPDATE emp SET salaiy=salary+5000 WHERE emp_name=lv_emp_name(i);
+COMMIT;	
+Dbms_output.put_line(‘Salary Updated‘);
+CLOSE guru99_det;
+END;
+/
+Code Explanation:
+
+Code line 2: Declaring the cursor guru99_det for statement 'SELECT emp_name FROM emp'.
+Code line 3: Declaring lv_emp_name_tbl as table type of VARCHAR2(50)
+Code line 4: Declaring lv_emp_name as lv_emp_name_tbl type.
+Code line 6: Opening the cursor.
+Code line 7: Fetching the cursor using BULK COLLECT with the LIMIT size as 5000 intl lv_emp_name variable.
+Code line 8-11: Setting up FOR loop to print all the record in the collection lv_emp_name.
+Code line 12: Using FORALL updating the salary of all the employee by 5000.
+Code line 14: Committing the transaction.
+
+SAVE EXCEPTIONS and SQL%BULK_EXCEPTION
+
+We saw how the FORALL syntax allows us to perform bulk DML operations, but what happens if one of those individual operations results in an exception? If there is no exception handler, all the work done by the current bulk operation is rolled back. If there is an exception handler, the work done prior to the exception is kept, but no more processing is done. Neither of these situations is very satisfactory, so instead we should use the SAVE EXCEPTIONS clause to capture the exceptions and allow us to continue past them. We can subsequently look at the exceptions by referencing the SQL%BULK_EXCEPTION cursor attribute. To see this in action create the following table.
+
+BULK BINDS AND TRIGGERS
+For bulk updates and deletes the timing points remain unchanged. Each row in the collection triggers a before statement, before row, after row and after statement timing point. For bulk inserts, the statement level triggers only fire at the start and the end of the the whole bulk operation, rather than for each row of the collection. This can cause some confusion if you are relying on the timing points from row-by-row processing.
+
+----indices of and values of 
+The INDICES OF clause allows a bulk operation on a sparse collection by removing the reference to specific elements. In addition, upper and lower bounds can be specified using the BETWEEN clause.  Allowable syntaxes include:
+
+FORALL index IN INDICES OF collection
+FORALL index IN INDICES OF collection BETWEEN start AND end
+
+In a FORALL statement, the VALUES OF clause allows the values of one collection to be used as index pointers to another collection, as shown in the forall_values_of.sql script.
+
+
+Sparse. A collection is sparse if there is at least one index value between the lowest and highest defined index values that is not defined. For example, a sparse collection has an element assigned to index value 1 and another to index value 10 but nothing in between. The opposite of a sparse collection is a dense one.
+
+Types of Collections
+Collections were first introduced in Oracle7 Server and have been enhanced in several ways through the years and across Oracle Database versions. There are now three types of collections to choose from, each with its own set of characteristics and each best suited to a different circumstance.
+
+Associative array. The first type of collection available in PL/SQL, this was originally called a “PL/SQL table” and can be used only in PL/SQL blocks. Associative arrays can be sparse or dense and can be indexed by integer or string.
+
+Nested table. Added in Oracle8 Database, the nested table can be used in PL/SQL blocks, in SQL statements, and as the datatype of columns in tables. Nested tables can be sparse but are almost always dense. They can be indexed only by integer. You can use the MULTISET operator to perform set operations and to perform equality comparisons on nested tables.
+
+Varray. Added in Oracle8 Database, the varray (variable-size array) can be used in PL/SQL blocks, in SQL statements, and as the datatype of columns in tables. Varrays are always dense and indexed by integer. When a varray type is defined, you must specify the maximum number of elements allowed in a collection declared with that type
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+The dbms_warning built-in package is used in 11g to manipulate the default PL/SQL warning messages, in conjunction with the new 11g plsql_warnings parameter.
+
+According to Steve Feuerstein, "dbms_warning was designed to be used in install scripts in which you might need to disable a certain warning, or treat a warning as an error, for individual program units being compiled."
+
+Dr. Tim Hall shows this example of the dbms_warning package:
+
+ALTER SESSION SET PLSQL_WARNINGS='ENABLE:ALL';
+
+CREATE OR REPLACE PROCEDURE test_warnings AS
+  l_dummy  VARCHAR2(10) := '1';
+BEGIN
+  IF 1=1 THEN
+    SELECT '2'
+    INTO   l_dummy
+    FROM   dual;
+  ELSE
+    RAISE_APPLICATION_ERROR(-20000, 'l_dummy != 1!');
+  END IF;
+END;
+/
+
+SP2-0804: Procedure created with compilation warnings
+
+SHOW ERRORS
+
+LINE/COL ERROR
+-------- ---------------------------
+9/5      PLW-06002: Unreachable code
+
+----------------------------------------------------------------------------------------------------------------------------------
+Enable code optimization technique using PLSQL_OPTIMIZE_LEVEL
+The parameter was introduced in Oracle 10g to decide the level of optimization applicable for a program unit during compilation. The optimization during compilation means the removal of dead code, code movements to optimize iterative constructs, inline the calls if required, and choosing the best philosophy to optimally compile the program.
+
+It is set by the DBA at system, session and object level. It is the object compilation parameter which is retained by the object library unit. It can be queried in USER_PLSQL_OBJECT_SETTINGS view for a given object.
+
+Prior to 11g release, the parameter could accommodate only three valid values i.e. 0, 1, and 2. Oracle 11g introduced an additional optimization level 3. By default, the parameter value is 2. The compiler’s effort is directly proportional to the parameter value i.e. more the value, more the compiler’s effort.
+ALTER SESSION SET PLSQL_OPTIMIZE_LEVEL = 1
+
+PLSQL_OPTIMIZE_LEVEL:
+Level 0: no compiler optimizations (PL/SQL compiled as is);
+Level 1: high-level optimizations (such as moving constants out of loops);
+Level 2: default level. Aggressive optimizations (such as rewriting cursor-for-loops as array fetches) and in 11g, also inlining any subprograms that we request with PRAGMA INLINE;
+Level 3: most aggressive level: New in 11g, these will inline all subprograms where possible (excluding those contained in built-in packages).
+-----------------------------------------------------------------------------------
+
+11g PL/SQL Subprogram Inlining and Compound Triggers
+
+Subprogram inlining has been around in optimizing compilers for a long time.  With the 11g database, Oracle has included this feature in PL/SQL.  Basically subprogram inlining is where the program calls a subprogram (procedure or function) and the compiler places the actual subprogram code in place of the call to that code.  Since the subprogram code is in the main code (INLINE), the overhead of calling that subprogram is saved.  This allows you to program using a modular method, producing readable, maintainable source code, while the compiler optimizes the code to make it more efficient.
+
+If the PLSQL_OPTIMIZER_LEVEL is set to 3 the compiler will automatically try and inline subprograms.  If the PLSQL_OPTIMIZER_LEVEL is set to 2 (the default) it will not automatically try and inline subprograms.  So the PRAGMA INLINE is used to tell the optimizer to inline or not to inline depending on the setting of the optimizer level.
+
+The PRAGMA INLINE statement is used to tell the optimizer if the following statements subprograms should be placed inline or not.
+
+In the example below, the PARGMA INLINE is used to inline the first function call but not the second.  The PARGMA INLINE statement only effects the statement following PARGMA INLINE statement.
+
+create or replace package inline_demo is
+  procedure runtest;
+end;
+/
+
+create or replace package body inline_demo as 
+
+function newadd(n1 number) return number
+as
+ n11 number;
+begin
+  n11:= n1+n1;
+  return n11;
+end;
+
+procedure runtest as  
+  n2 number := 0;
+begin
+  n2 := 3;
+  dbms_output.put('Num: '||n2);
+  PRAGMA INLINE (newadd,'YES');
+  n2 := newadd(n2);
+  dbms_output.put('  Num2: '||n2);
+  PRAGMA INLINE (newadd,'NO');
+  n2 := newadd(n2);
+  dbms_output.put_line('  Num3: '||n2);
+end;
+
+end inline_demo;
+/
+
+SQL> exec inline_demo.runtest;
+Num: 3  Num2: 6  Num3: 12
+
+PL/SQL procedure successfully completed.
+
+The PARGMA INLINE impacts all calls in the statement that follows it. If the statement is a loop, then all calls to the subprogram in the loop is placed inline.
+
+Inlining subprogram code is a common and powerful code optimization capability that should be used when possible.  Placing the PLSQL_OPTIMIZER_LEVEL parameter to 3 will automate the code inline process.
+----------------------------------------------------------------------------------------------------------
+When to use Compound Triggers
+The compound trigger is useful when you want to accumulate facts that characterize the “for each row” changes and then act on them as a body at “after statement” time. Two popular reasons to use compound trigger are:
+
+To accumulate rows for bulk-insertion. We will later see an example for this.
+To avoid the infamous ORA-04091: mutating-table error
+PL/SQL Compound Triggers
+
+A compound trigger is a PL/SQL trigger that contains multiple actions that take place at different timing points.  The timing points for a compound trigger on a table are:
+
+BEFORE STATEMENT  - before trigger statement executes
+AFTER STATEMENT     - after the trigger statement executes
+BEFORE EACH ROW    - before each row the statement impacts
+AFTER EACH ROW       - after each row the statement impacts
+
+If the compound trigger is on a view, the only timing point is:
+
+INSTEAD OF EACH ROW
+
+The real advantage of the compound trigger is that the trigger definition has a declaration section and variable state is maintained through each timing section from the firing of the trigger to completion.  The statements at each timing point have some restrictions.  The statement must be DML and can contain Inserting, Updating, Deleting and Applying.  If the statement at the timing point does not impact any rows, the before statement and after statement do not fire.  The compound trigger body does not have an initialization block and thus no exception block.  All exceptions must be handled in the section that raised the exception.  You cannot pass execution from one section to another using an exception handler or a GOTO statement.  The references to :OLD, :NEW or :PARENT cannot be used in the declaration section, BEFORE STATEMENT or AFTER STATEMENT.  Only the BEFORE EACH ROW section can change the :NEW value.
+
+The order of firing within a compound trigger is defined, however like simple triggers, the order of firing of multiple triggers (compound or simple) is not guaranteed. The order of firing multiple triggers can be defined using the FOLLOWS statement.  The FOLLOWS option is explained in the next section.
+
+Lets look at a compound trigger. The following code creates a test table and a compound trigger that fires for each timing point associated with insert, update and delete statements. The triggering actions are logged in a PL/SQL table defined in the global declaration section. The final timing point for each statement prints out the content of the PL/SQL table to show that the variable state has been maintained throughout the lifetime of the statement.
+
+The example courtesy of Dr. Tim Hall (www.oracle-base.com)
+
+CREATE TABLE compound_trigger_test (
+  id           NUMBER,
+  description  VARCHAR2(50)
+);
+CREATE OR REPLACE TRIGGER compound_trigger_test_trg
+  FOR INSERT OR UPDATE OR DELETE ON compound_trigger_test
+    COMPOUND TRIGGER 
+
+  -- Global declaration.
+
+  TYPE t_tab IS TABLE OF VARCHAR2(50);
+  l_tab t_tab := t_tab(); 
+
+  BEFORE STATEMENT IS
+
+  BEGIN
+    l_tab.extend;
+    CASE
+      WHEN INSERTING THEN
+        l_tab(l_tab.last) := 'BEFORE STATEMENT - INSERT';
+      WHEN UPDATING THEN
+        l_tab(l_tab.last) := 'BEFORE STATEMENT - UPDATE';
+      WHEN DELETING THEN
+        l_tab(l_tab.last) := 'BEFORE STATEMENT - DELETE';
+    END CASE;
+  END BEFORE STATEMENT; 
+
+  BEFORE EACH ROW IS
+  BEGIN
+    l_tab.extend;
+    CASE
+      WHEN INSERTING THEN
+        l_tab(l_tab.last) := 'BEFORE EACH ROW - INSERT (new.id=' || :new.id ||
+')';
+      WHEN UPDATING THEN
+        l_tab(l_tab.last) := 'BEFORE EACH ROW - UPDATE (new.id=' || :new.id ||
+' old.id=' || :old.id || ')';
+      WHEN DELETING THEN
+        l_tab(l_tab.last) := 'BEFORE EACH ROW - DELETE (old.id=' || :old.id ||
+')';
+    END CASE;
+  END BEFORE EACH ROW; 
+
+  AFTER EACH ROW IS
+  BEGIN
+    l_tab.extend;
+    CASE
+      WHEN INSERTING THEN
+        l_tab(l_tab.last) := 'AFTER EACH ROW - INSERT (new.id=' || :new.id ||
+')';
+      WHEN UPDATING THEN
+        l_tab(l_tab.last) := 'AFTER EACH ROW - UPDATE (new.id=' || :new.id ||
+' old.id=' || :old.id || ')';
+      WHEN DELETING THEN
+        l_tab(l_tab.last) := 'AFTER EACH ROW - DELETE (old.id=' || :old.id ||
+')';
+    END CASE;
+  END AFTER EACH ROW; 
+
+  AFTER STATEMENT IS
+  BEGIN
+    l_tab.extend;
+    CASE
+      WHEN INSERTING THEN
+        l_tab(l_tab.last) := 'AFTER STATEMENT - INSERT';
+      WHEN UPDATING THEN
+        l_tab(l_tab.last) := 'AFTER STATEMENT - UPDATE';
+      WHEN DELETING THEN
+        l_tab(l_tab.last) := 'AFTER STATEMENT - DELETE';
+    END CASE;   
+
+    FOR i IN l_tab.first .. l_tab.last LOOP
+      DBMS_OUTPUT.put_line(l_tab(i));
+    END LOOP;
+    l_tab.delete;
+  END AFTER STATEMENT; 
+
+END compound_trigger_test_trg;
+/
+
+By issuing several insert, update and delete statements against the test table we can see that the compound trigger is working as expected.
+
+SQL> SET SERVEROUTPUT ON
+SQL> INSERT INTO compound_trigger_test VALUES (1, 'ONE');
+BEFORE STATEMENT - INSERT
+BEFORE EACH ROW - INSERT (new.id=1)
+AFTER EACH ROW - INSERT (new.id=1)
+AFTER STATEMENT - INSERT 
+
+1 row created.
+
+SQL> INSERT INTO compound_trigger_test VALUES (2, 'TWO');
+BEFORE STATEMENT - INSERT
+BEFORE EACH ROW - INSERT (new.id=2)
+AFTER EACH ROW - INSERT (new.id=2)
+AFTER STATEMENT - INSERT 
+
+1 row created.
+
+SQL> UPDATE compound_trigger_test SET id = id;
+BEFORE STATEMENT - UPDATE
+BEFORE EACH ROW - UPDATE (new.id=2 old.id=2)
+AFTER EACH ROW - UPDATE (new.id=2 old.id=2)
+BEFORE EACH ROW - UPDATE (new.id=1 old.id=1)
+AFTER EACH ROW - UPDATE (new.id=1 old.id=1)
+AFTER STATEMENT - UPDATE
+
+2 rows updated.
+
+SQL> DELETE FROM compound_trigger_test;
+BEFORE STATEMENT - DELETE
+BEFORE EACH ROW - DELETE (old.id=2)
+AFTER EACH ROW - DELETE (old.id=2)
+BEFORE EACH ROW - DELETE (old.id=1)
+AFTER EACH ROW - DELETE (old.id=1)
+AFTER STATEMENT - DELETE
+
+2 rows deleted. 
+
+SQL>
+
+One of the real advantages of a compound trigger is to use the FOR EACH ROW statement to capture changes and load them into a PL/SQL table, then use the AFTER STATEMENT statement to bulk load the changes into another table.  Using simple triggers, you would have to reference a package to load the data and then execute the bulk load.  With a compound trigger these operations are internal to the trigger.
+-----------------------------------------------------------------------------------------------------------------------------------------------
+NOCOPY Hint to Improve Performance of OUT and IN OUT Parameters in PL/SQL Code
+
+NOCOPY is a hint given to the compiler, indicating that the parameter is passed as a reference and hence actual value should not be copied in to the block and vice versa. The processing will be done accessing data from the original variable. (Which other wise, oracle copies the data from the parameter variable into the block and then copies it back to the variable after processing. This would put extra burdon on the server if the parameters are of large collections/sizes)
+
+nocopy cannot be used with IN parameter
+
+Oracle has two methods of passing passing OUT and IN OUT parameters in PL/SQL code:
+
+Pass By Value : The default action is to create a temporary buffer (formal parameter), copy the data from the parameter variable (actual parameter) to that buffer and work on the temporary buffer during the lifetime of the procedure. On successful completion of the procedure, the contents of the temporary buffer are copied back into the parameter variable. In the event of an exception occurring, the copy back operation does not happen.
+Pass By Reference : Using the NOCOPY hint tells the compiler to use pass by reference, so no temporary buffer is needed and no copy forward and copy back operations happen. Instead, any modification to the parameter values are written directly to the parameter variable (actual parameter).
+Under normal circumstances you probably wouldnt notice the difference between the two methods, but once you start to pass large or complex data types (LOBs, XMLTYPEs, collections etc.) the difference between the two methods can be come quite considerable. The presence of the temporary buffer means pass by value requires twice the memory for every OUT and IN OUT parameter, which can be a problem when using large parameters. In addition, the time it takes to copy the data to the temporary buffer and back to the parameter variable can be quite considerable.
+
+PROCEDURE in_out_nocopy (p_tab  IN OUT NOCOPY  t_tab) IS
+  l_count NUMBER;
+BEGIN
+  l_count := p_tab.count;
+END in_out_nocopy;
+
+
+Issues
+There are a number of issues associated with using the NOCOPY hint that you should be aware of before adding it to all your OUT and IN OUT parameters.
+
+NOCOPY is a hint. There are a number of circumstances where the compiler can ignore the hint, as described here.
+If you are testing the contents of the parameter as a measure of successful completion of a procedure, adding NOCOPY may give unexpected results. For example, suppose I pass the value of NULL and assume if the parameter returns with a NOT NULL value the procedure has worked. This will work without NOCOPY, since the copy back operation will not happen in the event of an exception being raised. If I add NOCOPY, all changes are instantly written to the actual parameter, so exceptions will not prevent a NOT NULL value being returned. This may seem like a problem, but in my opinion if this affects you it is an indication of bad coding practice on your part. Failure should be indicated by raising an exception, or at worst using a status flag, rather than testing for values.
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Table Functions and Pipelined Table Functions
+
+Table Functions
+Table functions are used to return PL/SQL collections that mimic tables. They can be queried like a regular table by using the TABLE operator in the FROM clause. Regular table functions require collections to be fully populated before they are returned. Since collections are held in memory, this can be a problem as large collections can waste a lot of memory and take a long time to return the first row. These potential bottlenecks make regular table functions unsuitable for large Extraction Transformation Load (ETL) operations. Regular table functions require named row and table types to be created as database objects.
+
+Create the types to support the table function.
+DROP TYPE t_tf_tab;
+DROP TYPE t_tf_row;
+
+CREATE TYPE t_tf_row AS OBJECT (
+  id           NUMBER,
+  description  VARCHAR2(50)
+);
+/
+
+CREATE TYPE t_tf_tab IS TABLE OF t_tf_row;
+/
+
+-- Build the table function itself.
+CREATE OR REPLACE FUNCTION get_tab_tf (p_rows IN NUMBER) RETURN t_tf_tab AS
+  l_tab  t_tf_tab := t_tf_tab();
+BEGIN
+  FOR i IN 1 .. p_rows LOOP
+    l_tab.extend;
+    l_tab(l_tab.last) := t_tf_row(i, 'Description for ' || i);
+  END LOOP;
+
+  RETURN l_tab;
+END;
+/
+
+-- Test it.
+SELECT *
+FROM   TABLE(get_tab_tf(10))
+ORDER BY id DESC;
+
+        ID DESCRIPTION
+---------- --------------------------------------------------
+        10 Description for 10
+         9 Description for 9
+         8 Description for 8
+         7 Description for 7
+         6 Description for 6
+         5 Description for 5
+         4 Description for 4
+         3 Description for 3
+         2 Description for 2
+         1 Description for 1
+
+10 rows selected.
+
+PIPELINED TABLE FUNCTIONS  --advantage memory usage over regular tables
+Pipelining negates the need to build huge collections by piping rows out of the function as they are created, saving memory and allowing subsequent processing to start before all the rows are generated.
+
+Pipelined table functions include the PIPELINED clause and use the PIPE ROW call to push rows out of the function as soon as they are created, rather than building up a table collection. Notice the empty RETURN call, since there is no collection to return from the function.
+
+-- Build a pipelined table function.
+CREATE OR REPLACE FUNCTION get_tab_ptf (p_rows IN NUMBER) RETURN t_tf_tab PIPELINED AS
+BEGIN
+  FOR i IN 1 .. p_rows LOOP
+    PIPE ROW(t_tf_row(i, 'Description for ' || i));   
+  END LOOP;
+
+  RETURN;
+END;
+/
+
+-- Test it.
+SELECT *
+FROM   TABLE(get_tab_ptf(10))
+ORDER BY id DESC;
+
+        ID DESCRIPTION
+---------- --------------------------------------------------
+        10 Description for 10
+         9 Description for 9
+         8 Description for 8
+         7 Description for 7
+         6 Description for 6
+         5 Description for 5
+         4 Description for 4
+         3 Description for 3
+         2 Description for 2
+         1 Description for 1
+
+10 rows selected.
+
+Once you start working with large warehousing ETL operations the performance improvements can be massive, allowing data loads from external tables via table functions directly into the warehouse tables, rather than loading via a staging area.
+
+NO_DATA_NEEDED Exception
+A pipelined table function may create more data than is needed by the process querying it. When this happens, the pipelined table function execution stops, raising the NO_DATA_NEEDED exception. This doesn't need to be explicitly handled provided you do not include an OTHERS exception handler.
+
+The function below returns 10 rows, but the query against it only ask for the first 5 rows, so the function stops processing by raising the NO_DATA_NEEDED exception.
+
+-- Build a pipelined table function.
+CREATE OR REPLACE FUNCTION get_tab_ptf (p_rows IN NUMBER) RETURN t_tf_tab PIPELINED AS
+BEGIN
+  FOR i IN 1 .. p_rows LOOP
+    DBMS_OUTPUT.put_line('Row: ' || i);
+    PIPE ROW(t_tf_row(i, 'Description for ' || i));
+  END LOOP;
+
+  RETURN;
+END;
+/
+
+Parallel Enabled Pipelined Table Functions
+To parallel enable a pipelined table function the following conditions must be met.
+
+The PARALLEL_ENABLE clause must be included.
+It must have one or more REF CURSOR input parameters.
+It must have a PARTITION BY clause to define a partitioning method for the workload. Weakly typed ref cursors can only use the PARTITION BY ANY clause, which randomly partitions the workload.
+The basic syntax is shown below.
+
+CREATE FUNCTION function-name(parameter-name ref-cursor-type)
+  RETURN rec_tab_type PIPELINED
+  PARALLEL_ENABLE(PARTITION parameter-name BY [{HASH | RANGE} (column-list) | ANY ]) IS
+BEGIN
+  ...
+END;
+
+note: Pipelined functions are useful if there is a need for a data source other than a table in a select statement
+A function is considered deterministic if it always returns the same result for a specific input value.  The Oracle documentation claims that defining pipelined table functions as deterministic by using the DETERMINISTIC clause allows Oracle to buffer their rows, thereby preventing multiple executions. But I can find no evidence to support this claim. 
+
+The test_deterministic.sql script defines a package containing two pipelined table functions, one of which is defined as deterministic.  It then executes the functions multiple times using two different methods to compare their performance.
+---------------------------------------------------------------------
+What does the dbms_parallel_execute DBMS package do?  When would I use dbms_parallel_execute instead of parallel DML?  Is it superior to parallel DML?
+
+ No, the dbms_parallel_execute package (new in 11g r2) is not as easy to use as vanilla parallel DML, IMHO, because Oracle parallel query (and DML) reliably divides a table into equal-sized chunks automatically.  The dbms_parallel_execute package is for special cases of incremental bulk updates in PL/SQL.
+
+you should use this package only where straight parallel DML is not appropriate, such as when you are using parallel DML inside PL/SQL loops (such as incrementally bulk updating data). This do-it-yourself parallelism in dbms_parallel_execute can be used to manually specify the degree of parallelism to fully saturate a dedicated server and he notes the following steps for using the dbms_parallel_execute package:
+ 
+1:  Create a task
+
+2:  Split the workload into chunks
+
+   exec dbms_parallel_execute.create_chunks_by_rowid
+   exec dbms_parallel_execute.create_chunks_by_number_col
+   exec dbms_parallel_execute.create_chunks_by_sql
+ 
+3:  Run the task
+
+   exec dbms_parallel_execute.run_task
+   User-defined framework
+   Task control
+ 
+4:  Check the task status
+
+5:  Drop the task
+ 
+You can view the status of dbms_parallel_execute with this dictionary SQL against the dba_parallel_execute_chunks view:
+ 
+select 
+   chunk_id, 
+   status, 
+   start_id, 
+   end_id
+from   
+   dba_parallel_execute_chunks
+where  
+   task_name = 'test_task'
+order by 
+   chunk_id;
+   
+ used to Updating large tables in parallel
+-------------------------------------------------------------------------------------------------------------------------------
+
+---oracle logging and no logging
+
+The logging_clause lets you specify whether creation of a database object will be logged in the redo log file (LOGGING) or not (NOLOGGING).
+
+The NOLOGGING attribute tells the Oracle that the operation being performed does not need to be recoverable in the event of a failure. In this case Oracle will generate a minimal number of redo log entries in order to protect the data dictionary, and the operation will probably run faster. Oracle is relying on the user to recover the data manually in the event of a media failure
+
+************************************************************************************************************************************************************************************************************
+*********************************************************
+When do I use a global temporary table?  How does a global temporary table work to pass data to subsequent SQL statements?
+
+Answer:  Oracle introduced Global Temporary Tables (GTT) for removing complex subqueries and allowing us to materialize the intermediate data that we need to solve a complex problem with SQL.
+
+A global temporary table is a "template" for a table, that can be populated by any session in Oracle.  Once the session terminates, the global temporary table data disappears.
+
+12c note: Starting in 12c, Oracle will allow you to invoke session-level dbms_stats to gather statistics specific to your own global temporary table. Prior to 12c, statistics were shared from a master copy of the CBO statistics.
+
+A global temporary table can dramatically improve the performance of certain SQL self-join queries that summarize data values.  You can use the global temporary tables (GTT) syntax to improve the speed of queries that perform complex summarization activities.
+
+Temporary tables in Oracle are different to SQL Server. You create it ONCE and only ONCE, not every session. The rows you insert into it are visible only to your session, and are automatically deleted (i.e., TRUNCATE, not DROP) when you end you session ( or end of the transaction, depending on which "ON COMMIT" clause you use).
+
+In Oracle there isn't any difference. When you create a temporary table in an Oracle database, it is automatically global, and you are required to include the "Global" key word.
+
+The SQL standard, which defines how the term "GLOBAL TEMPORARY TABLE" is interpreted, allows for either a LOCAL or GLOBAL scope. This would allow for either a user specific table (LOCAL) or everyone (GLOBAL). Oracle implements only the GLOBAL version.
+
+The data you put into an Oracle Temporary table is specific to your session. That is, only you can see your data even if there are 100 users all using the same table, and your data is deleted from the table when you disconnect (or when you commit the current transaction) depending upon table settings.
+
+Additionally, Oracle (global) temp tables are very useful when each of your users/sessions need to each see a different set of data. Just INSERT the records to your global temp table and let Oracle manage keeping one user's set from another's, as well as the cleanup. You don't need to query them with the user's ID, a session id or whatever.
+
+CREATE GLOBAL TEMPORARY TABLE my_temp_table (
+  id           NUMBER,
+  description  VARCHAR2(20)
+)
+ON COMMIT DELETE ROWS;
+
+-- Insert, but don't commit, then check contents of GTT.
+INSERT INTO my_temp_table VALUES (1, 'ONE');
+
+SELECT COUNT(*) FROM my_temp_table;
+
+  COUNT(*)
+----------
+         1
+
+Miscellaneous Features
+If the TRUNCATE statement is issued against a temporary table, only the session specific data is truncated. There is no affect on the data of other sessions.
+Data in temporary tables is stored in temp segments in the temp tablespace.
+Data in temporary tables is automatically deleted at the end of the database session, even if it ends abnormally.
+Indexes can be created on temporary tables. The content of the index and the scope of the index is the same as the database session.
+Views can be created against temporary tables and combinations of temporary and permanent tables.
+Temporary tables can have triggers associated with them.
+Export and Import utilities can be used to transfer the table definitions, but no data rows are processed.
+Statistics on temporary tables are common to all sessions. Oracle 12c allows session specific statistics.
+There are a number of restrictions related to temporary tables but these are version specific.
+
+1)If you need an index that cannot be created implicitly through a UNIQUE or PRIMARY KEY constraint then you need a #temporary table as it is not possible to create these on table variables. (Examples of such indexes are non-unique ones, filtered indexes or indexes with INCLUDEd columns). NB: SQL Server 2014 will allow non-unique indexes to be declared inline for table variables.
+2)If you will be repeatedly adding and deleting large numbers of rows from the table then use a #temporary table. That supports TRUNCATE (which is more efficient than DELETE for large tables) and additionally subsequent inserts following a TRUNCATE can have better performance than those following a DELETE as illustrated here.
+3)If you will be deleting or updating a large number of rows then the temp table may well perform much better than a table variable - if it is able to use rowset sharing (see "Effects of rowset sharing" below for an example).
+4)If the optimal plan using the table will vary dependent on data then use a #temporary table. That supports creation of statistics which allows the plan to be dynamically recompiled according to the data (though for cached temporary tables in stored procedures the recompilation behaviour needs to be understood separately).
+5)If the optimal plan for the query using the table is unlikely to ever change then you may consider a table variable to skip the overhead of statistics creation and recompiles (would possibly require hints to fix the plan you want).
+6)If the source for the data inserted to the table is from a potentially expensive SELECT statement then consider that using a table variable will block the possibility of this using a parallel plan.
+7)If you need the data in the table to survive a rollback of an outer user transaction then use a table variable. A possible use case for this might be logging the progress of different steps in a long SQL batch.
+8)When using a #temp table within a user transaction locks can be held longer than for table variables (potentially until the end of transaction vs end of statement dependent on the type of lock and isolation level) and also it can prevent truncation of the tempdb transaction log until the user transaction ends. So this might favour the use of table variables.
+9)Within stored routines, both table variables and temporary tables can be cached. The metadata maintenance for cached table variables is less than that for #temporary tables. Bob Ward points out in his tempdb presentation that this can cause additional contention on system tables under conditions of high concurrency. Additionally, when dealing with small quantities of data this can make a measurable difference to performance.
+
+Apart from this, there are few other differences between a Table Variable and a Temporary Table
+
+Scope of a Table Variable is only within the batch that declared it whereas Temporary Tables are visible within a session.
+Creation of too many Temporary Tables may result in contention of the SGAM Pages.
+In events of rollback, data  processing in table variables (within the transaction) are not rolled back or destroyed unlike the temporary tables.
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Oracle WITH clause
+
+ Global Temporary Tables - The table definition is permanent.
+- Materialized Views - The definition and the data are permanent.
+- The WITH clause - The materialized subquery data is persistent through the query.
+
+
+The SQL WITH clause is very similar to the use of Global temporary tables (GTT), a technique that is often used to improve query speed for complex subqueries. Here are some important notes about the Oracle "WITH clause":
+
+   • The SQL WITH clause only works on Oracle 9i release 2 and beyond.
+   • Formally, the WITH clause is called subquery factoring
+   • The SQL WITH clause is used when a subquery is executed multiple times
+   • Also useful for recursive queries (SQL-99, but not Oracle SQL)
+
+To keep it simple, the following example only references the aggregations once, where the SQL WITH clause is normally used when an aggregation is referenced multiple times in a query.
+
+WITH 
+subquery_name
+AS
+(the aggregation SQL statement)
+SELECT
+(query naming subquery_name);
+
+There are some important differences between inline views (derived tables) and WITH clause(CTE) in Oracle. Some of them are quite universal, i.e. are applicable to other RDBMS.
+
+WITH can be used to build recursive subqueries, inline view -not (as far as I know the same is for all RDBMS that support CTE)
+Subquery in WITH clause is more likely be physically executed first ; in many cases, choosing between WITH and inline view makes optimizer to choose different execution plans (I guess it's vendor specific, maybe even version specific ).
+Subquery in WITH can be materialized as a temporary table ( I'm not aware if any other vendor but Oracle supports this feature).
+Subquery in WITH can be referenced multiple times , in other subqueries, and in the main query (true for most RDBMS).
+
+The with clause, aka subquery factoring, allows you to tell us "hey, reuse this result over and over in the query". We can factor out a subquery that is used more then once and reuse it -- resulting in a perhaps "better" plan. 
+
+What would be the difference between WITH clause & temporary table?
+
+WITH clause is used in a select query generally when you have to perform some join on a couple of subqueries which contains complex clauses such as HAVING (though not necessarily). Generally speaking WITH clause can only be used in a SELECT statement.
+
+But in a case where data has to be manipulated, meaning you want to change data on some condition or even would like to delete some rows again depending on some complex condition you would rather like to go with TEMP TABLE. Although most cases would be achieved by WITH it generally comes at a cost of some complex logic, in TEMP table you can have a couple of different SQL statements to achieve the same.
+
+Also, TEMP table is generally used as a staging table rather than a view for SELECT query i.e. TEMP table are used when you want to load tons of data from S3, you might want to load the data into a temp table, analyze the data, remove redundancy and finally merge it into the original table in one go.While TEMP table is transient only for the current session, WITH is always re-evaluated.
+
+The main difference is that the temporary table is a stored table. A CTE is more akin to a view, and helps you express your SQL in an easier to read, more logical way. The same differences apply between tables and views in that a table gives you the potential to do things in a performant way.
+
+If you were building a very complex query or one that needs to be built in stages, WITH clause/CTE would help you do that. However if you were looking to store data in a table to improve performance, a temporary table would be your best bet. Similarly, a temporary table can be used again and again, so if you had the same code used in multiple queries, you might consider a temporary table rather than a CTE.
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------
+Diff B/w EXECUTE IMMEDIATE AND DBMS_SQL
+
+EXECUTE IMMEDIATE (and its sister DBMS_SQL) are used to execute SQL inside of a PL/SQL block. These differ from "regular" SQL in that they actually use a completely different SQL engine (in PL/SQL's case it runs in the oracle process) to compute. This is why so many of us preach "if you can do it in SQL don't do it in PL/SQL".
+Even these two options differ between how. EXECUTE IMMEDIATE is quick and easy but kind of dumb. DBMS_SQL is a little more complex but gives the developer a lot more control.
+
+Since DBMS_SQL allows us to open and manipulate the cursor in which the PL/SQL block is operating inside of the result would be very difficult to reproduce in an EXECUTE IMMEDIATE block (difficulty level: no selecting from ALL_TAB_COLS this is just meant to be informative:).
+
+1. EXECUTE IMMEDIATE is used for functionalities such as OBJECTS and COLLECTIONS which is not supported in DBMS_SQL.
+2. EXECUTE IMMEDIATE reprepairs the dynamic string everytime before execution, so it might create some overhead.
+3. Using DBMS_SQL to execute DDL can lead to Deadlocks
+
+a)dbms_sql where I opened, parsed, bound, executed and closed the cursor in a loop. This is by far the worst performing method. We do not need to open, parse and close in the loop and doing so added about 1 (out of 2.6) seconds to our runtime 
+b)EXECUTE IMMEDIATE to execute a plsql block that BULK inserted 
+1000 rows. This was by far the fastest. 
+
+note: Never concatenate when you can bind. The constant concatenation means that the 10,000 independent SQL statements need to be parsed, resolved, and executed
+I understand that using bind variables in an insert statement can speed up the performance. 
+-----------------------------------------------------------------------------------------------------------------
+
+package advantages
+
+What is pl/sql packages.?
+
+It is a collection of related variables,cursors,procedures,functions stored at one location.
+
+Better performance
+When you invoke a packaged subprogram for the first time, the entire package is loaded into memory. Later calls to subprograms in the same package need no disk I/O. This translates to better performance.
+
+Security and maintainability through private code
+With packages, you can specify which subprograms, types and items are public (visible and accessible outside the package) or private (hidden and inaccessible outside the package)
+
+Organized code management,Easy implementation changes
+Changes to a subprogram can create havoc with other programs that reference it. Not so with packages. If only code in the package body is changed, no change is needed in the dependent objects. Not even a recompile is required.
+
+Disadvantages of packages.
+
+Whole package get effected if any procedure or function in the package not working.
+All the procedures & functions get compiled if u made a changes in one procedure.
+-------------------------------------------------------------------------------------
+What is snapshot in oracle?
+A snapshot is a recent copy of a table from db or in some cases, a subset of rows/cols of a table. They are used to dynamically replicate the data between distributed databases.
+
+Explain an ORA-01555 (snapshot too old )
+  
+You get this error when you get a snapshot too old within rollback. It can usually be solved by increasing the undo retention or increasing the size of rollbacks. You should also look at the logic involved in the application getting the error message.
+
+What is the difference between a snapshot and a materialized view?
+
+Snapshot is a copy of a table on a remot system but materialized niew is used to make a snapshot of a table available on a remote system.
+
+There is no basic difference between the materialized view and snapshot. Snapshot is an old term for materialized view. The only difference is that it is redefined in the later version. The basic definition is materialized view is a table that stores derived data. For example we have a master database and we create a materialized view for that master database then if we need to update certain table every 2 or 4 hours in materialized view then it will be updated. Or in other words a materialized view is a replica of a target master from a single point in time. In the earlier version of Oracle database snapshots were enhanced to enableDMLs. But with the later release version of database snapshots started to be used in data warehouse environments also. So a new terminology materialized view was introduced to address both distributed and data warehouse.
+
+
+syntax:
+CREATE SNAPSHOT my_replicated_table 
+       PCTFREE 10 PCTUSED 40
+       TABLESPACE ts2
+       STORAGE (initial 60k next 10k pctincrease 1)
+       REFRESH FAST
+               START WITH SYSDATE
+               NEXT (sysdate+1) + 3/24 
+       AS SELECT * FROM ORACLE. my_master_table@london;
+
+GRANT ALL ON my_replicated_table  TO PUBLIC;
+
+"Complete Refresh" means you truncate entire materialized view and insert new data.
+
+"Fast Refresh" means you update (or insert/delete) only the rows which have been changed on master tables.
+
+And just as information "Force Refresh" mean, Oracle tries to make a Fast Refresh and if this is not possible then do "Complete Refresh"
+
+Usually Fast Refresh is much faster than Complete Refresh but it has restrictions. You have to define MATERIALIZED VIEW LOG on master tables
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+What is Oracle Table Fragmentation?
+If a table is only subject to inserts, there will not be any fragmentation.
+Fragmentation comes with when we update/delete data in table.
+The space which gets freed up during non-insert DML operations is not immediately re-used (or sometimes, may not get reuse ever at all). This leaves behind holes in table which results in table fragmentation.
+
+To understand it more clearly, we need to be clear on how oracle manages space for tables.
+
+When rows are not stored contiguously, or if rows are split onto more than one block, performance decreases because these rows require additional block accesses.
+
+Note that table fragmentation is different from file fragmentation. When a lot of DML operations are applied on a table, the table will become fragmented because DML does not release free space from the table below the HWM.
+
+HWM is an indicator of USED BLOCKS in the database. Blocks below the high water mark (used blocks) have at least once contained data. This data might have been deleted. Since Oracle knows that blocks beyond the high water mark don't have data, it only reads blocks up to the high water mark when doing a full table scan.
+
+DDL statement always resets the HWM.
+
+What are the reasons to reorganization of table?
+
+a) Slower response time (from that table)
+b) High number of chained (actually migrated) rows. 
+c) Table has grown many folds and the old space is not getting reused.
+
+Note: Index based queries may not get that much benefited by reorg as compared to queries which does Full table scan.
+
+How to find Table Fragmentation?
+
+In Oracle schema there are tables which has huge difference in actual size (size from User_segments) and expected size from user_tables (Num_rows*avg_row_length (in bytes)). This all is due to fragmentation in the table or stats for table are not updated into dba_tables.
+
+-------------------------------------------------------------------------------------------------------------------------------- 
+Advantages of trigger:
+
+1) Triggers can be used as an alternative method for implementing referential integrity constraints.
+
+2) By using triggers, business rules and transactions are easy to store in database and can be used consistently even if there are future updates to the database.
+
+3) It controls on which updates are allowed in a database.
+
+4) When a change happens in a database a trigger can adjust the change to the entire database.
+
+5) Triggers are used for calling stored procedures.
+
+Disadvantages of trigger:
+
+1) It is easy to view table relationships , constraints, indexes, stored procedure in database but triggers are difficult to view.
+
+2) Triggers execute invisible to client-application application. They are not visible or can be traced in debugging code.
+
+3) It is hard to follow their logic as it they can be fired before or after the database insert/update happens.
+
+4) It is easy to forget about triggers and if there is no documentation it will be difficult to figure out for new developers for their existence.
+
+--------------------------------------------------------------------------------------------------------------------------------------------------
+What is the difference between CHAR and VARCHAR2 datatype in SQL?
+Both Char and Varchar2 are used for characters datatype but varchar2 is used for character strings of variable length whereas Char is used for strings of fixed length. For example, char(10) can only store 10 characters and will not be able to store a string of any other length whereas varchar2(10) can store any length i.e 6,8,2 in this variable.	 
+
+What do you mean by Denormalization?
+Denormalization refers to a technique which is used to access data from higher to lower forms of a database. It helps the database managers to increase the performance of the entire infrastructure as it introduces redundancy into a table. It adds the redundant data into a table by incorporating database queries that combine data from various tables into a single table.
+
+Explain different types of Normalization.
+Normalization is the process of organizing data to avoid duplication and redundancy. ,There are many successive levels of normalization. These are called normal forms. Each consecutive normal form depends on the previous one.The first three normal forms are usually adequate.
+
+First Normal Form (1NF) – No repeating groups within rows
+Second Normal Form (2NF) – Every non-key (supporting) column value is dependent on the whole primary key.
+Third Normal Form (3NF) – Dependent solely on the primary key and no other non-key (supporting) column value.
+
+What is ACID property in a database?
+ACID stands for Atomicity, Consistency, Isolation, Durability. It is used to ensure that the data transactions are processed reliably in a database system. 
+
+Atomicity: Atomicity refers to the transactions that are completely done or failed where transaction refers to a single logical operation of a data. It means if one part of any transaction fails, the entire transaction fails and the database state is left unchanged.
+
+Consistency: Consistency ensures that the data must meet all the validation rules. In simple words,  you can say that your transaction never leaves the database without completing its state.
+
+Isolation: The main goal of isolation is concurrency control.
+
+Durability: Durability means that if a transaction has been committed, it will occur whatever may come in between such as power loss, crash or any sort of error.
+
+What are the different types of a subquery?
+There are two types of subquery namely, Correlated and Non-Correlated.
+
+Correlated subquery: These are queries which select the data from a table referenced in the outer query. It is not considered as an independent query as it refers to another table and refers the column in a table.
+
+Non-Correlated subquery: This query is an independent query where the output of subquery is substituted in the main query.
+
+What do you mean by recursive stored procedure?
+Recursive stored procedure refers to a stored procedure which calls by itself until it reaches some boundary condition. This recursive function or procedure helps the programmers to use the same set of code n number of times.
+
+List the ways in which  Dynamic SQL can be executed?
+Following are the ways in which dynamic SQL can be executed:
+
+Write a query with parameters.
+Using EXEC.
+Using sp_executesql.
+
+What do you mean by Collation?
+Collation is defined as a set of rules that determine how data can be sorted as well as compared. Character data is sorted using the rules that define the correct character sequence along with options for specifying case-sensitivity, character width etc.
+
+ What are Local and Global variables?
+Local variables:
+These variables can be used or exist only inside the function. These variables are not used or referred by any other function.
+
+Global variables:
+These variables are the variables which can be accessed throughout the program. Global variables cannot be created whenever that function is called.
+
+What are STUFF and REPLACE function?
+STUFF Function: This function is used to overwrite existing character or inserts a string into another string. Syntax:
+STUFF(string_expression,start, length, replacement_characters)
+where,
+string_expression: it is the string that will have characters substituted
+start: This refers to the starting position
+length: It refers to the number of characters in the string which are substituted.
+replacement_string: They are the new characters which are injected in the string.
+ 
+REPLACE function: This function is used to replace the existing characters of all the occurrences. Syntax:
+REPLACE (string_expression, search_string, replacement_string)
+
+5) Triggers run every time when the database fields are updated and it is overhead on system. It makes system run slower.
+-----------------------------------------------------------------------------------------------------------------------------------
+How would you decide your backup strategy and timing for backup?In fact backup strategy is purely depends upon your organization business need. 
+If no downtime then database must be run on archivelog mode and you have to take frequently or daily backup. 
+If sufficient downtime is there and loss of data would not affect your business then you can run your database in noarchivelog mode and backup can be taken in-frequently or weekly or monthly.
+In most of the case in an organization when no downtime then frequent inconsistent backup needed (daily backup), multiplex online redo log files (multiple copies), different location for redo log files, database must run in archivelog mode and dataguard can be implemented for extra bit of protection.
+
+
+What is difference between Restoring and Recovery of database?
+Restoring means copying the database object from the backup media to the destination where actually it is required where as recovery means to apply the database object copied earlier (roll forward) in order to bring the database into consistent state.
+
+What is the difference between complete and incomplete recovery?An incomplete database recovery is a recovery that it does not reach to the point of failure. The recovery can be either point of time or particular SCN or Particular archive log specially incase of missing archive log or redolog failure where as a complete recovery recovers to the point of failure possibly when having all archive log backup.
+
+What is the benefit of running the DB in archivelog mode over no archivelog mode?
+When a database is in no archivelog mode whenever log switch happens there will be a loss of some redoes log information in order to avoid this, redo logs must be archived. This can be achieved by configuring the database in archivelog mode.
+
+
+If an oracle database is crashed? How would you recover that transaction which is not in backup?If the database is in archivelog we can recover that transaction otherwise we cannot recover that transaction which is not in backup.
+
+What is the difference between HOTBACKUP and RMAN backup?
+For hotbackup we have to put database in begin backup mode, then take backup where as RMAN would not put database in begin backup mode. RMAN is faster can perform incremental (changes only) backup, and does not place tablespace in hotbackup mode.
+
+Can we use Same target database as Catalog database?
+No, the recovery catalog should not reside in the target database (database to be backed up) because the database can not be recovered in the mounted state.
+
+Incremental backup levels:
+Level 0 – full backup that can be used for subsequent incrementals
+RMAN> backup incremental level 0 database;
+Differential Level 1–only the blocks that have changed since the last backup (whether it is level 0 or level 1) 
+RMAN> backup incremental level 1 differential database;
+Cumulative Level 1 – all changes since the last level 0 incremental backup
+RMAN> backup incremental level 1 cumulative database;
+A full backup cannot be used for a cumulative level 1 backup. 
+A cumulative level 1 backup must be done on top of an incremental level 0 backup.
+
+
+
+Why RMAN incremental backup fails even though full backup exists?If you have taken the RMAN full backup using the command ‘Backup database’, where as a level 0 backup is physically identical to a full backup. The only difference is that the level 0 backup is recorded as an incremental backup in the RMAN repository so it can be used as the parent for a level 1 backup. Simply the ‘full backup without level 0’ can not be considered as a parent backup from which you can take level 1 backup.
+
+
+Can we perform RMAN level 1 backup without level 0?If no level 0 is available, then the behavior depends upon the compatibility mode setting (oracle version). 
+If the compatibility mode less than 10.0.0, RMAN generates a level 0 backup of files contents at the time of backup. 
+If the compatibility is greater than 10.0.0, RMAN copies all block changes since the file was created, and stores the results as level 1 backup.
+ 
+How to put Manual/User managed backup in RMAN?In case of recovery catalog, you can put by using catalog command:
+RMAN> CATALOG START WITH ‘/oracle/backup.ctl’;
+
+
+
+How to check RMAN version in oracle?If you want to check RMAN catalog version then use the below query from SQL*plus
+SQL> Select * from rcver;
+
+What happens actually in case of instance Recovery?While Oracle instance fails, Oracle performs an Instance Recovery when the associated database is being re-started. Instance recovery occurs in 2 steps:
+Cache recovery: Changes being made to a database are recorded in the database buffer cache as well as redo log files simultaneously. When there are enough data in the database buffer cache, they are written to data files. If an Oracle instance fails before these data are written to data files, Oracle uses online redo log files to recover the lost data when the associated database is re-started. This process is called cache recovery.
+Transaction recovery: When a transaction modifies data in a database (the before image of the modified data is stored in an undo segment which is used to restore the original values in case the transaction is rolled back). At the time of an instance failure, the database may have uncommitted transactions. It is possible that changes made by these uncommitted transactions have gotten saved in data files. To maintain read consistency, Oracle rolls back all uncommitted transactions when the associated database is re-started. Oracle uses the undo data stored in undo segments to accomplish this. This process is called transaction recovery.
