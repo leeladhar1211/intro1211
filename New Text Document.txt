@@ -1,0 +1,8 @@
+http://idwbi.com/informatica-data-quality-idq-interview-questions/
+http://www.itnirvanas.com/2013/11/idq-interview-questions-part1.html
+
+job Description
+Technical and Professional Requirements- • Minimum 3 years of experience in ETL development using Informatica with experience of requirement analysis, designing and developing ETL jobs.,• Minimum 2 years of experience with Informatica Analyst/Developer tools (DQ tools) along with any RDBMS and scripting.,• Strong working knowledge in Data Quality Profiling, Rules and Scorecards.,• Strong working knowledge in Data Quality Transformation and Address Doctor.,• Good working knowledge in Unix (should be able to write wrapper scripts). ,• Ability to work with team in diverse/ multiple stakeholder environment.,• Experience and desire to work in a Global delivery environment., • Location of posting is driven by business needs.
+
+Responsibilities- • Conduct requirement analysis.,• Define the activities and modules to develop and lead execution to guarantee superior outcomes. ,• Collaborate with some of the best talent in the industry to create innovative high quality and defect-free solutions to meet our clients’ business needs.
+
