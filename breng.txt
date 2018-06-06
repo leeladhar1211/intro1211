@@ -1,0 +1,2241 @@
+#!/bin/bash
+###########################################################################################################################################
+#
+# Scriptname B_UPDSLOUT.ksh
+#
+#
+# Purpose : contains functions required to run the Upload Seliin File from ERP and ISC b_updsliin.scd to
+#           understand the flow of this batch.
+#
+#
+# Called by : b_updslout.scd
+#
+# Amendment History :
+#
+#    Ver        Date        Author           Description
+#  ---------  ----------  ---------------  ---------------------------------------------------
+#   1.0        19/01/2015   Guna           Initial version - DMOPPM
+#
+#
+##########################################################################################################################################
+
+#*******************************************************************************************************************************
+# R.Balaji    07-DEC-2016 : RFC-1402073 - Added Product ID Validations for this RFC.
+# R.Balaji    23-DEC-2016 : RFC-1395588 - Zipcode change
+# K.Raghavi   03-03-3017  : RFC-1649925 - Restructing the Reject final table to update product and partner exception id seperately.
+#***********************************************************************************************************************************
+
+#----------------------------- Common Functions ------------------------------------------------------------------------------
+. $BATCH_SHELL_DIR/common_functions.ksh
+
+
+#------------------------------ PUBLIC FUNCTIONS -----------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------------------------------
+#-
+#- These functions are called from the .scd file
+#-----------------------------------------------------------------------------------------------------------------------------
+
+#*******************************************************************************************************************************
+# SURESH(SRY) 08-SEP-2015 : Added the code to Look up the data from Partner master and update fact table when PNP closes
+#                      the partner exception record.
+#*******************************************************************************************************************************
+
+get_input_file()
+{
+      typeset partner_id=$1
+
+      typeset list_of_partners
+
+      if [[ $partner_id == 'ALL' ]] ; then
+            list_of_partners=$(ls -1 $BATCH_PARTNER_DIR|grep -v ERP|grep -v ISC)
+            for partner in $list_of_partners
+            do
+                ls -1 $BATCH_PARTNER_DIR/${partner}/INPUT/DMO_*_??????_Sellout.csv &&
+                #echo "Files found for partner ${partner}" &&
+                (mkdir_if_not_exist "${BATCH_PARTNER_DIR}/${partner}/OUTPUT" "${BATCH_PARTNER_DIR}/${partner}/ERROR") ||
+                continue
+            done
+      else
+            valid_partner=$`echo partner_id` || abort "could not retreive the Partner from PARAMETER_DETAILS_VALUE table"
+            [[ -z $valid_partner ]] && abort "Partner $partner_id does not exist on table PARAMETER_DETAILS_VALUE"
+
+            ls -1 $BATCH_PARTNER_DIR/${partner_id}/INPUT/DMO_*_??????_Sellout.csv &&
+            #echo "Files found for partner ${partner_id}" &&
+            (mkdir_if_not_exist "${BATCH_PARTNER_DIR}/${partner_id}/OUTPUT" "${BATCH_PARTNER_DIR}/${partner_id}/ERROR")
+      fi
+
+      exit 0
+
+}
+
+#-----------------------------------------------------------------------------------------------------------------------------
+create_md_temp_tables()
+{
+    runsqlplus<<!EOF
+
+    set time on
+    set timing on
+    set echo on
+    set lines 132
+    set serveroutput on
+
+    whenever oserror exit failure;
+
+    ------------------------------------------------------------------------------------------------------------------------
+    -- Remove temporary tables from previous run if they exist.
+    ------------------------------------------------------------------------------------------------------------------------
+    whenever sqlerror continue;
+
+    drop table dmodw.sell_out_md_stg_01;
+    --drop table dmodw.sell_out_md_stg_02;
+    drop table dmodw.sell_out_md_stg_03;
+    drop table dmodw.sell_out_md_stg_04;
+
+    whenever sqlerror exit failure rollback;
+
+    ------------------------------------------------------------------------------------------------------------------------
+    -- Verify that the external table does not reference repeated table names by checking in
+    -- the external_locations view. This is to protect against an occasional Oracle bug.
+    -- If this bug does arise the corrective action is to rerun the alter table that defines the
+    -- location of the files.
+    ------------------------------------------------------------------------------------------------------------------------
+    begin
+    newbatch.CheckExtTabForDupLocations('SELL_OUT_MD_EXT');
+    end;
+    /
+
+    ------------------------------------------------------------------------------------------------------------------------
+    --  Load stage table with external table data
+    ------------------------------------------------------------------------------------------------------------------------
+
+    create table dmodw.sell_out_md_stg_01 as
+    ( select rownum                                                                 as record_number,
+           REGEXP_REPLACE( UPPER(REPLACE(vatid,' ','')),'[^[:alnum:]'' '']', '')    as vat_id_upper,
+           substr( file_name, (instr(file_name,'_') +1 ),
+                   (instr(file_name,'_Sellout') -12) )                              as md_vat_id,
+           substr( file_name, (instr(file_name,'.') -7 ), 7 )                       as file_type,
+           substr( file_name, (instr(file_name,'.') -14 ), 6 )                      as file_seq,
+           sysdate                                                                  as load_date,
+           t1.*
+      from dmodw.sell_out_md_ext t1 ) ;
+
+    begin
+    DBMS_STATS.GATHER_TABLE_STATS ( ownname => 'DMODW', tabname => 'sell_out_md_stg_01', estimate_percent => .0001);
+    end;
+    /
+
+    ------------------------------------------------------------------------------------------------------------------------
+    --  Load stage table with record level validation
+    ------------------------------------------------------------------------------------------------------------------------
+
+	delete from dmodw.sell_out_md_stg_02 where file_name in (select distinct file_name from dmodw.sell_out_md_stg_01);
+
+	insert into dmodw.sell_out_md_stg_02
+    select
+           record_number,
+           file_name,
+           file_originator,
+           file_type,
+           file_seq,
+           load_date,
+           invoicenumber                                            as  md_invoice_number,
+           invoicedate                                              as  invoice_date,
+           vatid                                                    as  vat_id,
+           vat_id_upper                                             as  vat_id_upper,
+           customername                                             as  customer_name,
+           UPPER(customername)                                      as  customer_name_upper,
+           address                                                  as  address,
+           UPPER(country)                                           as  country_code,
+           city                                                     as  city,
+           state                                                    as  state,
+		   -- RFC-1395588-Zipcode change
+           case
+               when TRIM(ZIPCODE) is null
+				then nvl(to_char(dpmd.POSTAL_CODE),'00000')
+               when is_number(ZIPCODE) !=0
+				then nvl(to_char(dpmd.POSTAL_CODE),'00000')
+			   when dmodm.is_decimal(ZIPCODE) !=0
+				then nvl(to_char(dpmd.POSTAL_CODE),'00000')
+			   when TRIM(zipcode) is null and TRIM(dpmd.VAT_ID) is null
+			    then '00000'
+				else zipcode
+           end                                                      as  zipcode,
+		   -- RFC-1395588-Zipcode change
+           UPPER (Case
+                  When Length(zipcode) < 5 Then lpad(zipcode,5,'0')
+                  Else zipcode End )                                as  address_line,
+           UPPER (zipcode || state || city )                        as  address_line2,
+           telephonenumber                                          as  phone_number,
+           partnumber                                               as  product_part_id_org,
+           UPPER(partnumber)                                        as  product_part_id_upper_org,
+           --++RFC:1182291
+		   Newbatch.GetProductPartid(upper(partnumber))             as  product_part_id,
+           Newbatch.GetProductPartid(UPPER(partnumber))             as  product_part_id_upper,
+		   --RFC:1182291
+           productdescription                                       as  product_part_description,
+           UPPER(productdescription)                                as  product_description_upper,
+           quantityshipped                                          as  quantity_shipped,
+           unitprice                                                as  unit_price,
+           case when UPPER(currencycode)='MXP' then 'MXN'
+           else UPPER(currencycode)
+           end                                                      as  currency_code,
+           currencycode                                             as  org_currencycode,
+           marketingconfiguration                                   as  marketing_configuration,
+           to_char(substr(serialnumber,1,400))                      as  serial_number,
+           transactiontype                                          as  transaction_type,
+           originaltransactionid                                    as  original_transaction_id,
+           originaltransactiondate                                  as  original_transaction_date,
+           md_vat_id                                                as  md_vat_id,
+           md_partner.name                                          as  md_name,
+           md_partner.partner_id                                    as  md_partner_id,
+           CASE
+               WHEN md_partner.partner_id IS NULL THEN
+               'INVALID MD:NOT PRESENT IN PNP, '
+           END
+           ||
+           case
+               when INVOICENUMBER is null  then
+               'NULL INVOICENUMBER, '
+           end ||
+           case
+               when INVOICEDATE is null then
+               'NULL INVOICEDATE, '
+               when is_date(INVOICEDATE,'DD/MM/YYYY') !=0  then 'DATE_FORMAT_ERR: INVOICEDATE, '
+           end ||
+           case
+               when VATID is null then
+               'NULL VATID, '
+           end ||
+           case
+               when COUNTRY is null then
+               'NULL COUNTRY, '
+           end ||
+           case
+               when CITY is null then
+               'NULL CITY, '
+           end ||
+           case
+               when STATE is null then
+               'NULL STATE, '
+           end ||
+           -- RFC-1395588-Zipcode change
+		   --case
+           --    when ZIPCODE is null then
+           --    'NULL ZIPCODE, '
+           --    when is_number(ZIPCODE) !=0  then  'NUMERIC_ERR: ZIPCODE, '
+           --end ||
+		   -- RFC-1395588-Zipcode change
+           case
+               when CUSTOMERNAME is null then
+               'NULL CUSTOMERNAME, '
+           end ||
+           case
+               when PARTNUMBER is null then
+               'NULL PARTNUMBER, '
+           end ||
+           case
+               when QUANTITYSHIPPED is null then 'NULL QUANTITYSHIPPED, '
+               when is_number(QUANTITYSHIPPED) !=0  then  'NUMERIC_ERR: QUANTITYSHIPPED, '
+           end ||
+           case
+               when UNITPRICE is null then 'NULL UNITPRICE, '
+               when is_number(UNITPRICE) !=0  then  'NUMERIC_ERR: UNITPRICE, '
+			   --++RFC:1351867
+			   when UNITPRICE < 0 then  'NEGATIVE UNITPRICE, '
+			   --RFC:1351867
+           end ||
+           case
+               when CURRENCYCODE is null then
+               'NULL CURRENCYCODE, '
+           end ||
+           case
+               when TRANSACTIONTYPE is null then
+               'NULL TRANSACTIONTYPE, '
+               when TRANSACTIONTYPE  not in('81','380')then
+               'INVALID_VALUE:TRANSACTIONTYPE'
+           end ||
+           case
+               when is_date(ORIGINALTRANSACTIONDATE,'DD/MM/YYYY') !=0  then
+               'DATE_FORMAT_ERR: ORIGINALTRANSACTIONDATE, '
+           end                                                      as reject_reason_level_1
+      from dmodw.sell_out_md_stg_01 a,
+           ( SELECT  PARTNER_ID,
+                     REGEXP_REPLACE (upper(vat_id) ,'[^[:alnum:]'' '']', '') vat_id, upper(name) name
+               FROM DMODM.DMO_PARTNER_MASTER_D WHERE UPPER(PARTNER_TYPE)='MD' and ACTIVE_IND = 'AC'
+            ) md_partner,
+	     ( SELECT * FROM ( SELECT  PARTNER_ID,
+                     REGEXP_REPLACE (upper(vat_id) ,'[^[:alnum:]'' '']', '') vat_id, upper(name) name,
+                                         POSTAL_CODE,
+            row_number() over ( partition by REGEXP_REPLACE (upper(vat_id) ,'[^[:alnum:]'' '']', '') order by MODIFICATION_DATETIME asc) r
+               FROM DMODM.DMO_PARTNER_MASTER_D WHERE ACTIVE = 'Y' and ACTIVE_IND = 'AC' and upper(partner_type) = 'RESELLER'
+              ) WHERE R = 1 ) dpmd
+                        where upper(MD_VAT_ID) = upper(md_partner.vat_id (+)) AND
+                              upper(vat_id_upper) = upper(dpmd.vat_id (+)) ;
+
+	 -- RFC-1395588-Zipcode change	-Added details for dpmd newly
+	Commit;
+
+    begin
+    DBMS_STATS.GATHER_TABLE_STATS ( ownname => 'DMODW', tabname => 'sell_out_md_stg_02', estimate_percent => .0001);
+    end;
+    /
+
+    --------------------------------------------------------------------------------------------------------------------------
+    --  Load stage table to flag duplicates records grouping product_part_id, invoice_number, reseller_vat_id & md_partner_id
+    --------------------------------------------------------------------------------------------------------------------------
+
+     create table dmodw.sell_out_md_stg_03 as
+     select * from (
+     select A.*,
+            sum (case
+                    when transaction_type=380
+                        then quantity_shipped
+                    else null end )        over (partition by  product_part_id, md_invoice_number, vat_id_upper, md_vat_id ) as quantity_shipped_sum,
+            sum (case
+                    when transaction_type=81
+                        then quantity_shipped
+                    else null end )        over (partition by  product_part_id, md_invoice_number, vat_id_upper, md_vat_id ) as quantity_shipped_return,
+            sum (quantity_shipped * Unit_price) over (partition by  product_part_id, md_invoice_number, vat_id_upper, md_vat_id ) as amount_sum,
+            avg (Unit_price)                    over (partition by  product_part_id, md_invoice_number, vat_id_upper, md_vat_id ) as unit_price_avg,
+                    row_number() over (partition by  product_part_id, md_invoice_number, vat_id_upper, md_partner_id order by record_number asc ) as dup_flag
+     from (
+     SELECT s.record_number, s.file_name, s.file_originator, s.file_type, s.file_seq,
+       s.load_date, s.md_invoice_number, s.invoice_date, s.vat_id,
+       s.vat_id_upper, s.customer_name, s.customer_name_upper, s.address,
+       s.country_code, s.city, s.state, s.zipcode, s.address_line,
+       s.address_line2, s.phone_number, s.product_part_id_org,
+       s.product_part_id_upper_org,
+       NVL (e.reseller_productpart_id, s.product_part_id) product_part_id,
+       s.product_part_id_upper, s.product_part_description,
+       s.product_description_upper, s.quantity_shipped, s.unit_price,
+       s.currency_code, s.org_currencycode, s.marketing_configuration,
+       s.serial_number, s.transaction_type, s.original_transaction_id,
+       s.original_transaction_date, s.md_vat_id, s.md_name, s.md_partner_id,
+       s.reject_reason_level_1
+  FROM dmodw.sell_out_md_stg_02 s,
+       (SELECT DISTINCT TRIM (UPPER (md_productpart_id)) AS md_productpart_id,
+                        TRIM
+                           (UPPER (reseller_productpart_id)
+                           ) AS reseller_productpart_id,
+                        TRIM (UPPER (country)) AS country_code,
+                        TRIM (UPPER (md_vat_id)) AS md_vat_id
+                   FROM dmodm.dmo_product_exception_d
+                  WHERE reseller_productpart_id IS NOT NULL
+                    AND UPPER (status) = 'CLOSED') e
+ WHERE reject_reason_level_1 IS NULL
+   AND TRUNC (load_date) = TRUNC (SYSDATE)
+   AND UPPER (s.product_part_id_upper) = UPPER (e.md_productpart_id(+))
+   AND UPPER (s.country_code) = UPPER (e.country_code(+))
+   AND UPPER (s.md_vat_id) = UPPER (e.md_vat_id(+))
+     ) a )
+     where dup_flag = 1  ;
+
+
+     begin
+     DBMS_STATS.GATHER_TABLE_STATS ( ownname => 'DMODW', tabname => 'sell_out_md_stg_03', estimate_percent => .0001);
+     end;
+/
+
+    ------------------------------------------------------------------------------------------------------------------------
+    --  Load stage table Partner ans Product Exception
+    ------------------------------------------------------------------------------------------------------------------------
+
+ CREATE   TABLE dmodw.sell_out_md_stg_04 AS
+    (
+       SELECT  s.record_number, s.file_name, s.file_originator, s.file_type,
+       s.file_seq, s.load_date, s.md_invoice_number, s.invoice_date, s.vat_id,
+       s.vat_id_upper, s.customer_name, s.customer_name_upper, s.address,
+       s.country_code, s.city, s.state, s.zipcode, s.address_line,
+       s.address_line2, s.phone_number, s.product_part_id_org,
+       s.product_part_id_upper_org,
+       NVL(e.reseller_productpart_id,s.product_part_id) product_part_id,
+       s.product_part_id_upper, s.product_part_description,
+       s.product_description_upper, s.quantity_shipped, s.unit_price,
+       s.currency_code, s.org_currencycode, s.marketing_configuration,
+       s.serial_number, s.transaction_type, s.original_transaction_id,
+       s.original_transaction_date, s.md_vat_id, s.md_name, s.md_partner_id,
+       s.reject_reason_level_1, s.quantity_shipped_sum,
+       s.quantity_shipped_return, s.amount_sum, s.unit_price_avg, s.dup_flag,
+                country.country_id,
+                CASE
+                    WHEN  partner.vat_id IS NOT NULL AND partner_address.vat_id  IS NULL
+                    THEN 'ERR1004'
+                             -- VAT_ID present but address not matching in PNP
+                    WHEN  partner.vat_id IS NULL AND partner_name.NAME IS NOT NULL
+                    THEN 'ERR1002'
+                        -- VAT_ID not present but Name ,address Present in PNP
+                    WHEN  partner.vat_id IS NULL
+                    THEN 'ERR1003'                       -- VAT_ID not present
+                END AS reject_reason_level_3,
+                CASE
+                    --RFC-1402073 - Added Product ID Validations for this RFC.
+                    -- WHEN d.product_part_id is null
+WHEN                     d.product_part_id IS NULL AND e.reseller_productpart_id IS NULL
+                    --RFC-1402073 - Added Product ID Validations for this RFC.
+THEN                     'ERR1005'       -- PRODUCT_PART_ID NOT PRESENT IN PNP
+                    ELSE NULL
+                END AS reject_reason_level_4,
+                partner_address.address_line_master
+           FROM
+                dmodw.sell_out_md_stg_03 s,
+                ( SELECT DISTINCT REGEXP_REPLACE( UPPER(vat_id) ,'[^[:alnum:]'' '']', '')     vat_id,
+                            UPPER(b.country_code)                                             country_code
+                         FROM dmodm.dmo_partner_master_d a, dmodm.dmo_country_d b
+                         WHERE a.active_ind = 'AC' AND b.active_ind = 'AC'
+                            AND a.country_id =  b.country_id
+                            AND UPPER(a.partner_type) <> 'MD' ) partner,
+                ( SELECT DISTINCT TRIM(UPPER(NAME))                                            NAME,
+                         --UPPER( TRIM(postal_code) || TRIM(state) || TRIM(city) )               address_line_master,
+UPPER                         ( TRIM(postal_code))                                             address_line_master,
+                         UPPER(b.country_code)                                                 country_code
+                         FROM dmodm.dmo_partner_master_d a, dmodm.dmo_country_d b
+                         WHERE a.active_ind = 'AC' AND b.active_ind = 'AC'
+                           AND a.country_id =  b.country_id
+                           AND UPPER(a.partner_type) <> 'MD') partner_name,
+                ( SELECT DISTINCT
+                         REGEXP_REPLACE( UPPER(vat_id) ,'[^[:alnum:]'' '']', '')               vat_id,
+                         --UPPER( TRIM(postal_code) || TRIM(state) || TRIM(city) )               address_line_master,
+UPPER                         ( TRIM(postal_code))                                             address_line_master,
+                         UPPER(b.country_code)                                                 country_code
+                         FROM dmodm.dmo_partner_master_d a, dmodm.dmo_country_d b
+                         WHERE a.active_ind = 'AC' AND b.active_ind = 'AC'
+                            AND a.country_id =  b.country_id
+                            AND UPPER(a.partner_type) <> 'MD') partner_address,
+                ( SELECT country_id, TRIM(UPPER(country_code)) country_code FROM dmodm.dmo_country_d WHERE active_ind = 'AC' ) country,
+                ( SELECT DISTINCT TRIM(UPPER(product_part_id)) product_part_id,UPPER(b.country_code) country_code
+                          FROM dmodm.dmo_product_catalog_d a , dmodm.dmo_country_d b
+                         WHERE a.active_ind = 'AC' AND b.active_ind = 'AC'
+                           AND a.country_id =  b.country_id) d,
+                --RFC-1402073 - Added Product ID Validations for this RFC.
+(                 SELECT
+                        DISTINCT TRIM(UPPER(md_productpart_id)) AS md_productpart_id,
+                        TRIM(UPPER(reseller_productpart_id)) AS reseller_productpart_id,
+                        TRIM(UPPER(country)) AS country_code,
+                        TRIM(UPPER(md_vat_id)) AS md_vat_id
+                    FROM dmodm.dmo_product_exception_d
+                    WHERE reseller_productpart_id IS NOT NULL
+                    AND UPPER(status) = 'CLOSED'
+                     ) e
+          --RFC-1402073 - Added Product ID Validations for this RFC.
+WHERE           UPPER(s.country_code)          = UPPER(country.country_code (+))
+            AND UPPER(s.vat_id_upper)          = UPPER(partner.vat_id (+))
+            AND UPPER(s.country_code)          = UPPER(partner.country_code (+))
+            AND UPPER(s.customer_name_upper)   = UPPER(partner_name.NAME (+))
+            AND UPPER(s.address_line)          = UPPER(partner_name.address_line_master (+))
+            AND UPPER(s.country_code)          = UPPER(partner_name.country_code (+))
+            AND UPPER(s.vat_id_upper)          = UPPER(partner_address.vat_id (+))
+            AND UPPER(s.country_code)          = UPPER(partner_address.country_code (+))
+            AND UPPER(s.address_line)          = UPPER(partner_address.address_line_master (+))
+            AND UPPER(s.product_part_id_upper) = UPPER(d.product_part_id (+))
+            AND UPPER(s.country_code)          = UPPER(d.country_code (+))
+            --RFC-1402073 - Added Product ID Validations for this RFC.
+AND             UPPER(s.product_part_id_upper) = UPPER(e.md_productpart_id (+))
+            AND UPPER(s.country_code)          = UPPER(e.country_code (+))
+            AND UPPER(s.MD_VAT_ID)          = UPPER(e.md_vat_id (+))
+    --RFC-1402073 - Added Product ID Validations for this RFC.
+);
+
+     begin
+		DBMS_STATS.GATHER_TABLE_STATS ( ownname => 'DMODW', tabname => 'sell_out_md_stg_04', estimate_percent => .0001);
+     end;
+/
+
+exit
+/
+!EOF
+}
+
+#---------------------------------------------------------------------------------------------------------
+merge_exception()
+{
+
+    runsqlplus<<!EOF
+
+    set time on
+    set timing on
+    set echo on
+    set lines 132
+    set serveroutput on
+
+    whenever sqlerror exit failure rollback;
+
+    -------------------------------------------------------------------------------------------------------
+    -- Merge record INTO DMODM.DMO_PARTNER_EXCEPTION_D table
+    -------------------------------------------------------------------------------------------------------
+
+	-- Added address_line,postal_code in below code by SRY : 08-SEP-2015
+    MERGE INTO dmodm.dmo_partner_exception_d ex
+         USING (SELECT t.country_code, t.md_vat_id,   t.md_name, t.vat_id_upper,
+                      t.customer_name, t.address_line,t.reject_reason_level_3, t.exception_count_tmp,
+                      x.exception_count
+                 FROM (SELECT   country_code, md_vat_id, md_name, vat_id_upper,
+                                customer_name, address_line,reject_reason_level_3,
+                                COUNT (*) AS exception_count_tmp
+                           from dmodw.sell_out_md_stg_04
+                          WHERE reject_reason_level_3 IS NOT NULL
+                       GROUP BY country_code,  md_vat_id,  md_name, vat_id_upper, customer_name, address_line,reject_reason_level_3) t,
+                      (select * from dmodm.dmo_partner_exception_d where UPPER(status) = 'OPEN') x
+                WHERE upper(t.country_code) 		= upper(x.country (+))
+                  and upper(t.md_vat_id)            = upper(x.md_vat_id (+))
+                  and upper(t.md_name)              = upper(x.md_name (+))
+                  AND upper(t.vat_id_upper)         = upper(x.md_reseller_vat_id (+))
+                  AND upper(t.customer_name)        = upper(x.md_reseller_name (+))
+				  AND upper(t.address_line)         = upper(x.postal_code (+))
+                  AND upper(t.reject_reason_level_3) = upper(x.reject_reason_code (+))
+                ) tmp
+            ON (    upper(ex.country)            = upper(tmp.country_code)
+                AND upper(ex.md_vat_id)          = upper(tmp.md_vat_id)
+                AND upper(ex.md_name)            = upper(tmp.md_name)
+                AND upper(ex.md_reseller_vat_id) = upper(tmp.vat_id_upper)
+                AND upper(ex.md_reseller_name)   = upper(tmp.customer_name)
+				AND upper(ex.postal_code)        = upper(tmp.address_line)
+                AND upper(ex.reject_reason_code) = upper(tmp.reject_reason_level_3)
+                AND (    UPPER (ex.status) in ('OPEN','IGNORE')
+                     OR (UPPER (ex.status) = 'CLOSED' AND upper(ex.reject_reason_code) = 'ERR1003' )
+                     OR (UPPER (ex.status) = 'CLOSED' AND upper(ex.reject_reason_code) = 'ERR1004' )
+                    )
+               )
+            WHEN MATCHED THEN
+            UPDATE
+                  SET exception_count = (tmp.exception_count + tmp.exception_count_tmp),
+                      modification_user       = '$BATCH_ID',
+                      modification_datetime   = sysdate
+                  WHERE UPPER (ex.status) <> 'CLOSED'
+            WHEN NOT MATCHED THEN
+            INSERT (partner_exception_seqid, country, md_vat_id, md_name,
+                    md_reseller_vat_id, md_reseller_name, postal_code,
+					reject_reason_code,
+                    exception_count, report_url, status,creation_user,creation_datetime)
+            VALUES (dmodm.dmo_partner_exception_d_seq.nextval, tmp.country_code,
+                    tmp.md_vat_id, tmp.md_name, tmp.vat_id_upper, tmp.customer_name,tmp.address_line,
+                    tmp.reject_reason_level_3, tmp.exception_count_tmp,
+                    'https://ebi-dmo.partnernet.xerox.com/ibi_apps/WFServlet?'||'&'||'IBIF_ex=mx_so_partner_exception.fex',
+                    'OPEN','$BATCH_ID', sysdate);
+
+    -------------------------------------------------------------------------------------------------------
+    -- Merge record INTO DMODM.DMO_PRODUCT_EXCEPTION_D table
+    -------------------------------------------------------------------------------------------------------
+
+    MERGE INTO dmodm.dmo_product_exception_d ex
+         USING (SELECT t.country_code, t.md_vat_id, t.md_name, t.product_part_id,
+                       t.product_part_description, t.reject_reason_level_4,
+                       t.tmp_exception_count
+                  FROM (SELECT   country_code, md_vat_id, md_name, product_part_id,
+                                 product_part_description, reject_reason_level_4,
+                                 COUNT (*) AS tmp_exception_count
+                            from dmodw.sell_out_md_stg_04
+                           WHERE reject_reason_level_4 IS NOT NULL
+                        GROUP BY country_code, md_vat_id, md_name, product_part_id, product_part_description, reject_reason_level_4
+                        ) t
+                 )tmp
+         ON (    upper(ex.country)   = upper(tmp.country_code)
+             AND upper(ex.md_vat_id) = upper(tmp.md_vat_id)
+             AND upper(ex.md_name)   = upper(tmp.md_name)
+             AND upper(ex.md_productpart_id) = upper(tmp.product_part_id)
+             AND upper(ex.md_product_description) = upper(tmp.product_part_description)
+             AND upper(ex.reject_reason_code) = upper(tmp.reject_reason_level_4)
+			 --++RFC_1281586
+             AND UPPER (ex.status) in ('OPEN','IGNORE'))
+         WHEN MATCHED THEN
+              UPDATE
+              SET exception_count = (exception_count + tmp.tmp_exception_count),
+                  modification_user       = '$BATCH_ID',
+                  modification_datetime   = SYSDATE
+              WHERE UPPER (ex.status) in ('OPEN','IGNORE')
+			--RFC_1281586
+         WHEN NOT MATCHED THEN
+            INSERT (product_exception_seqid,COUNTRY, md_vat_id,
+                    md_name, md_productpart_id, md_product_description,
+                    status, reject_reason_code, exception_count,
+                    report_url,creation_user,creation_datetime)
+            VALUES (dmodm.dmo_product_exception_d_seq.nextval,tmp.country_code, tmp.md_vat_id,
+                    tmp.md_name, tmp.product_part_id, tmp.product_part_description,
+                    'OPEN', tmp.reject_reason_level_4, tmp.tmp_exception_count,
+                    'https://ebi-dmo.partnernet.xerox.com/ibi_apps/WFServlet?'||'&'||'IBIF_ex=mx_so_product_exception.fex',
+                    '$BATCH_ID', SYSDATE) ;
+
+   COMMIT;
+
+exit
+/
+!EOF
+}
+
+#---------------------------------------------------------------------------------------------------------
+create_intrm_table()
+{
+
+    runsqlplus<<!EOF
+
+    set time on
+    set timing on
+    set echo on
+    set lines 132
+    set serveroutput on
+
+    whenever oserror exit failure;
+
+    ------------------------------------------------------------------------------------------------------------------------
+    -- Remove temporary tables from previous run if they exist.
+    ------------------------------------------------------------------------------------------------------------------------
+    whenever sqlerror continue;
+
+    drop table dmodw.DMO_SELLOUT_METRICS_BASE_INTRM;
+
+    whenever sqlerror exit failure rollback;
+
+    -------------------------------------------------------------------------------------------------------
+    -- create INTRM table records to merge into DMO_SELL_OUT_METRICS_BASE_F table
+    -------------------------------------------------------------------------------------------------------
+
+    create table DMODW.DMO_SELLOUT_METRICS_BASE_INTRM
+    as
+    with
+    partner_master_filter as
+    (SELECT partner_id                                              pm_partner_id,
+            REGEXP_REPLACE (upper(vat_id), '[^[:alnum:]'' '']', '') pm_vat_id,
+            country_id                                              pm_country_id,
+            pm_address_line
+            from (
+            select row_number() over (partition by  REGEXP_REPLACE (upper(vat_id), '[^[:alnum:]'' '']', ''), pm_address_line
+                   order by partner_id asc ) as dup_flag_1,
+                   t2.* from (select --UPPER( TRIM(postal_code) || TRIM(state) || TRIM(city) ) as pm_address_line, t1.*
+                                       UPPER( TRIM(postal_code)) as pm_address_line, t1.*
+                                from dmodm.dmo_partner_master_d t1 where upper(t1.Partner_type) <> 'MD' and active_ind = 'AC' ) t2)
+           where dup_flag_1 = 1 order by vat_id
+    )
+    (SELECT
+            a.*,
+            currency.exchange_rate,
+			nvl(quantity_shipped_sum,0) - nvl(quantity_shipped_return,0) as derived_quantity,        ----new colum added derived_quantity  5/31/2016
+            CASE
+               WHEN UPPER (t2.status) = 'CLOSED'
+               AND t2.reseller_productpart_id IS NOT NULL
+                  THEN TO_CHAR(t2.reseller_productpart_id)
+               ELSE TO_CHAR(a.product_part_id)
+            END                                                  as product_part_id_upd,
+            CASE
+               WHEN partner_master_filter.pm_partner_id IS NULL
+               and  UPPER (t1.status) = 'CLOSED'
+               AND t1.PARTNER_ID IS NOT NULL
+               --AND t1.reject_reason_code <> 'ERR1001'
+               --AND t1.REJECT_REASON_CODE<>'ERR1002'
+               AND t1.REJECT_REASON_CODE = 'ERR1004'
+               AND t1.reseller_vat_id IS NOT NULL
+               THEN to_char(t1.reseller_vat_id)
+               ELSE a.vat_id_upper
+            END                                                  as reseller_vat_id,
+            TO_DATE (a.original_transaction_date, 'DD/MM/RRRR')  as original_transaction_dt,
+            TO_DATE (a.invoice_date, 'DD/MM/RRRR')               as invoice_dt,
+            --TO_NUMBER (a.unit_price)                             as unit_price_num,
+			--++RFC: 1247174
+			decode(TO_NUMBER (a.unit_price_avg),TO_NUMBER (a.unit_price),TO_NUMBER (a.unit_price))  as unit_price_num,
+			----RFC: 1247174
+            CASE
+               WHEN partner_master_filter.pm_partner_id IS NULL
+               AND UPPER (t1.status) = 'CLOSED'
+               --AND t1.reject_reason_code <> 'ERR1001'
+               --AND t1.REJECT_REASON_CODE<>'ERR1002'
+               AND t1.REJECT_REASON_CODE = 'ERR1004'
+               AND t1.partner_id IS NOT NULL
+                  THEN t1.partner_id
+               ELSE partner_master_filter.pm_partner_id
+            END                                                  as reseller_partner_id,
+            CASE
+               WHEN TRIM (a.transaction_type) = '81'
+               AND a.currency_code = 'USD'
+                  THEN -- a.quantity_shipped_sum * a.unit_price
+				       a.amount_sum
+                       * currency.exchange_rate
+               WHEN TRIM (a.transaction_type) = '81'
+                    AND a.currency_code <> 'USD'
+                  THEN --a.quantity_shipped_sum * a.unit_price
+				        a.amount_sum
+               ELSE NULL
+            END                                                  as rma_local,
+            CASE
+               WHEN TRIM (a.transaction_type) = '81'
+               AND a.currency_code <> 'USD'
+                  THEN  -- (a.quantity_shipped_sum * a.unit_price)
+				        a.amount_sum
+                       / currency.exchange_rate
+               WHEN TRIM (a.transaction_type) = '81'
+                    AND a.currency_code = 'USD'
+                  THEN -- a.quantity_shipped_sum * a.unit_price
+				        a.amount_sum
+               ELSE NULL
+            END                                                  as rma_usd,
+			--Revenue - RMA calculation updated
+            CASE
+               WHEN TRIM (a.transaction_type) = '380'
+               AND a.currency_code = 'USD'
+                  THEN -- a.quantity_shipped_sum * a.unit_price
+				       a.amount_sum
+                       * currency.exchange_rate
+               WHEN TRIM (a.transaction_type) = '380'
+               AND a.currency_code <> 'USD'
+                  THEN -- a.quantity_shipped_sum * a.unit_price
+				       a.amount_sum
+               ELSE 0
+            END -
+			CASE
+               WHEN TRIM (a.transaction_type) = '81'
+               AND a.currency_code = 'USD'
+                  THEN -- a.quantity_shipped_sum * a.unit_price
+				       a.amount_sum
+                       * currency.exchange_rate
+               WHEN TRIM (a.transaction_type) = '81'
+                    AND a.currency_code <> 'USD'
+                  THEN --a.quantity_shipped_sum * a.unit_price
+				        a.amount_sum
+               ELSE 0
+            END													as revenue_local,
+			--Revenue - RMA calculation updated
+            CASE
+               WHEN TRIM (a.transaction_type) = '380'
+               AND a.currency_code <> 'USD'
+                  THEN  -- (a.quantity_shipped_sum * a.unit_price)
+				       a.amount_sum
+                       / currency.exchange_rate
+               WHEN TRIM (a.transaction_type) = '380'
+                    AND a.currency_code = 'USD'
+                  THEN --a.quantity_shipped_sum * a.unit_price
+				        a.amount_sum
+               ELSE 0
+            END -
+			CASE
+               WHEN TRIM (a.transaction_type) = '81'
+               AND a.currency_code <> 'USD'
+                  THEN  -- (a.quantity_shipped_sum * a.unit_price)
+				        a.amount_sum
+                       / currency.exchange_rate
+               WHEN TRIM (a.transaction_type) = '81'
+                    AND a.currency_code = 'USD'
+                  THEN -- a.quantity_shipped_sum * a.unit_price
+				        a.amount_sum
+               ELSE 0
+            END															as revenue_usd,
+            CASE
+               WHEN partner_master_filter.pm_partner_id IS NOT NULL
+               THEN NULL
+               WHEN UPPER (t1.status) = 'OPEN'
+                  THEN t1.partner_exception_seqid
+               WHEN UPPER (t1.status) = 'CLOSED'
+                  THEN NULL
+            END                                                  as partner_exception_seqid,
+            CASE
+               WHEN partner_master_filter.pm_partner_id IS NOT NULL
+               THEN NULL
+               WHEN UPPER (t1.status) = 'OPEN'
+                  THEN 'N'
+               ELSE NULL
+            END                                                  as  partner_exp_correction_flag,
+            CASE
+               WHEN UPPER (t2.status) = 'CLOSED'
+                  THEN NULL
+               ELSE t2.product_exception_seqid
+            END                                                  as product_exception_seqid,
+            CASE
+               WHEN UPPER (t2.status) = 'OPEN'
+                  THEN 'N'
+               ELSE NULL
+            END                                                  as product_exp_correction_flag
+       FROM
+            --(SELECT * from dmodw.sell_out_md_stg_04 WHERE reject_reason_level_1 IS NULL ) a,
+			dmodw.sell_out_md_stg_04 a,
+            (SELECT * from dmodm.dmo_currency_lt where active_ind = 'AC') CURRENCY,
+             partner_master_filter,
+            ( select a.* from dmodm.dmo_partner_exception_d a
+               --where UPPER (status) <> 'CLOSED' OR reject_reason_code not in ( 'ERR1003' ,'ERR1002')
+               where UPPER (status) <> 'CLOSED' OR reject_reason_code = 'ERR1004'
+            ) t1,
+            dmodm.dmo_product_exception_d t2
+     where
+         a.country_id        = currency.country_id (+)
+         and To_Date (a.invoice_date,'DD/MM/RRRR')  Between currency.from_date(+) and currency.TO_DATE  (+)
+         and a.vat_id_upper  = partner_master_filter.pm_vat_id (+)
+         and a.address_line  = partner_master_filter.pm_address_line (+)
+         and a.country_id    = partner_master_filter.pm_country_id (+)
+         and upper(a.country_code)  = upper(t1.country (+))
+         and upper(a.md_vat_id)     = upper(t1.md_vat_id (+))
+         and a.vat_id_upper  = upper(t1.md_reseller_vat_id (+))
+         and upper(a.customer_name_upper) = upper(t1.md_reseller_name (+))
+		 and upper(a.address_line)  = upper(t1.postal_code (+))          -- Added by SRY : 08-SEP-2015
+		 and upper(a.reject_reason_level_3) = upper(t1.reject_reason_code (+))
+         and upper(a.country_code)  = upper(t2.country (+))
+         and upper(a.md_vat_id)     = upper(t2.md_vat_id (+))
+         and a.product_part_id_upper = upper(t2.md_productpart_id (+))
+         and a.product_description_upper = upper(t2.md_product_description (+))
+      );
+
+    begin
+    DBMS_STATS.GATHER_TABLE_STATS ( ownname => 'DMODW', tabname => 'dmo_sellout_metrics_base_intrm', estimate_percent => .0001);
+    end;
+/
+
+exit
+/
+!EOF
+}
+
+#---------------------------------------------------------------------------------------------------------
+
+pop_base_fact_table()
+{
+
+    runsqlplus<<!EOF
+
+    set time on
+    set timing on
+    set echo on
+    set lines 132
+    set serveroutput on
+
+    whenever sqlerror exit failure rollback;
+
+    -------------------------------------------------------------------------------------------------------
+    -- Merge record into dmo_sell_out_metrics_base_F table
+    -------------------------------------------------------------------------------------------------------
+
+	-- Added address_line by SRY : 08-SEP-2015
+    merge into dmodm.dmo_sell_out_metrics_base_f base
+    using ( select * from DMODW.dmo_sellout_metrics_base_intrm S) intrm
+    on
+    (   base.product_part_id     = Intrm.product_part_id   and
+        base.md_invoice_number   = Intrm.md_invoice_number and
+        base.reseller_vat_id     = Intrm.reseller_vat_id   and
+        base.md_partner_id       = Intrm.md_partner_id
+    )
+      when matched then
+        update set
+               base.currency_code                  = Intrm.currency_code,
+               base.country_id                     = Intrm.country_id,
+               base.original_transaction_id        = Intrm.original_transaction_id,
+               base.original_transaction_date      = original_transaction_dt,
+               base.marketing_configuration        = Intrm.marketing_configuration,
+               base.serial_number                  = SUBSTR(intrm.serial_number,1,400),
+               base.product_description            = SUBSTR(intrm.product_part_description,1,50),
+               base.md_invoice_date                = Intrm.invoice_dt,
+               base.quantity                       = intrm.derived_quantity,                     --- base.quantity=intrm.quantity_shipped_sum  changed to base.quantity=intrm.derived_quantity  5/31/2016
+			   base.quantity_return                = Intrm.quantity_shipped_return,
+               base.sale_price                     = Intrm.unit_price_num,
+               base.reseller_partner_id            = Intrm.reseller_partner_id,
+               base.rma_local                      = Intrm.rma_local,
+               base.rma_usd                        = Intrm.rma_usd,
+               base.revenue_local                  = Intrm.revenue_local,
+               base.revenue_usd                    = Intrm.revenue_usd,
+               base.partner_exception_seqid        = Intrm.partner_exception_seqid,
+               base.partner_exp_correction_flag    = Intrm.partner_exp_correction_flag,
+               base.product_exception_seqid        = Intrm.product_exception_seqid,
+               base.product_exp_correction_flag    = Intrm.product_exp_correction_flag,
+               base.exchange_rate                  = Intrm.exchange_rate,
+               base.modification_user              = '$BATCH_ID',
+               base.modification_datetime          = sysdate
+    when not matched then
+    insert
+        (
+               product_part_id, reseller_vat_id, md_invoice_number,
+               md_partner_id, currency_code, original_transaction_id,
+               original_transaction_date, marketing_configuration, country_id,
+               serial_number, product_description, md_invoice_date, quantity,
+               quantity_return,sale_price, reseller_partner_id, rma_local, rma_usd,
+               revenue_local, revenue_usd, address_line,
+			   partner_exception_seqid,
+               partner_exp_correction_flag, product_exception_seqid,
+               product_exp_correction_flag, exchange_rate, creation_user,creation_datetime
+        )
+    values
+        (
+               intrm.product_part_id, intrm.reseller_vat_id, intrm.md_invoice_number,
+               intrm.md_partner_id, intrm.currency_code, intrm.original_transaction_id,
+               intrm.original_transaction_dt, intrm.marketing_configuration, Intrm.country_id,
+               SUBSTR(intrm.serial_number,1,400), SUBSTR(intrm.product_part_description,1,50), intrm.invoice_dt, intrm.derived_quantity,intrm.quantity_shipped_return,              --- intrm.quantity_shipped_sum changed to intrm.derived_quantity  5/31/2016
+               intrm.unit_price_num, intrm.reseller_partner_id, intrm.rma_local, intrm.rma_usd,
+               intrm.revenue_local, intrm.revenue_usd, intrm.address_line,
+			   intrm.partner_exception_seqid,
+               intrm.partner_exp_correction_flag, intrm.product_exception_seqid,
+               intrm.product_exp_correction_flag, intrm.exchange_rate, '$BATCH_ID', sysdate
+         );
+
+	-- To populate the revenue subjected to Partner exception
+    Merge into dmodm.dmo_partner_exception_d d
+     using (select PARTNER_EXCEPTION_SEQID,sum(revenue_usd) total_revenue
+              from dmodm.dmo_sell_out_metrics_base_f
+             where PARTNER_EXCEPTION_SEQID is not null
+             group by PARTNER_EXCEPTION_SEQID
+            ) base
+        on (d.PARTNER_EXCEPTION_SEQID=base.PARTNER_EXCEPTION_SEQID)
+     when matched then
+     update set d.total_revenue_usd=base.total_revenue where upper(d.status)='OPEN';
+
+    -- To populate the revenue subjected to Product exception
+    Merge into dmodm.dmo_product_exception_d d
+     using (select PRODUCT_EXCEPTION_SEQID,sum(revenue_usd) total_revenue
+              from dmodm.dmo_sell_out_metrics_base_f
+             where PRODUCT_EXCEPTION_SEQID is not null
+             group by PRODUCT_EXCEPTION_SEQID
+           ) base
+         on (d.PRODUCT_EXCEPTION_SEQID=base.PRODUCT_EXCEPTION_SEQID)
+     when matched then
+     update set d.total_revenue_usd=base.total_revenue where upper(d.status)='OPEN';
+
+    COMMIT;
+
+exit
+/
+!EOF
+}
+
+#---------------------------------------------------------------------------------------------------------
+
+#--++RFC: 1182291
+#-----------------------------------------------------------------
+pop_drvd_fact_purge()
+{
+	runsqlplus<<!EOF
+
+    set time on
+    set timing on
+    set echo on
+    set lines 132
+    set serveroutput on
+
+    whenever oserror exit failure;
+	whenever sqlerror exit failure rollback;
+
+	truncate table DMODM.DMO_SELL_IN_OUT_METRICS_DRVD_F;
+
+exit
+/
+!EOF
+}
+#-----------------------------------------------------------------
+#--RFC: 1182291
+
+pop_drvd_fact_table()
+{
+
+    runsqlplus<<!EOF
+
+    set time on
+    set timing on
+    set echo on
+    set lines 132
+    set serveroutput on
+
+    whenever oserror exit failure;
+
+    ------------------------------------------------------------------------------------------------------------------------
+    -- Remove temporary tables from previous run if they exist.
+    ------------------------------------------------------------------------------------------------------------------------
+    whenever sqlerror continue;
+
+    drop table dmodw.prv_3_months_derived;
+    drop table dmodw.sell_out_md_stg_05;
+
+    whenever sqlerror exit failure rollback;
+
+    ----------------------------------------------------------------------------------------------------------
+    -- create stagging records to compute derived metrics and merge later into DMO_SELL_IN_OUT_METRICS_DRVD_F
+    ----------------------------------------------------------------------------------------------------------
+/*
+    column col_last1_mon_derived     new_value col_last1_mon_derived
+    column col_last2_mon_derived     new_value col_last2_mon_derived
+    column col_last3_mon_derived     new_value col_last3_mon_derived
+
+	column col_Curr1_mon_derived     new_value col_Curr1_mon_derived
+*/
+
+	/*
+    select col_last1_mon_derived, col_last2_mon_derived, col_last3_mon_derived
+      from
+        (
+         select
+           ADD_MONTHS ( TRUNC (SYSDATE, 'MM'),  -1) col_last1_mon_derived,
+           ADD_MONTHS ( TRUNC (SYSDATE, 'MM'),  -2) col_last2_mon_derived,
+           ADD_MONTHS ( TRUNC (SYSDATE, 'MM'),  -3) col_last3_mon_derived
+         from dual
+        );
+	*/
+
+/*
+	-- Taking the previous month based on the Latest available invoice date
+    select col_last1_mon_derived, col_last2_mon_derived, col_last3_mon_derived,col_Curr1_mon_derived
+      from
+        (
+         select
+           ADD_MONTHS ( TRUNC (Inv.invoice_date_max, 'MM'),  -1) col_last1_mon_derived,
+           ADD_MONTHS ( TRUNC (Inv.invoice_date_max, 'MM'),  -2) col_last2_mon_derived,
+           ADD_MONTHS ( TRUNC (Inv.invoice_date_max, 'MM'),  -3) col_last3_mon_derived,
+		   To_date(Inv.invoice_date_max,'DD-MON-RRRR')           col_Curr1_mon_derived
+         from dual,(Select MAX(Trunc(invoice_date,'MM'))  invoice_date_max
+                    from dmodm.dmo_sell_in_metrics_base_f Inv
+                   ) Inv
+        );
+
+    create table dmodw.prv_3_months_derived as
+        SELECT
+             *
+          FROM ( SELECT
+               product_part_id,
+               md_partner_id,
+               effective_Date,
+               NVL (sell_in_revenue_local, 0)           sell_in_revenue_local,
+               NVL (sell_in_quantity, 0)                sell_in_quantity,
+               NVL (sell_in_revenue_usd, 0)             sell_in_revenue_usd,
+               sell_out_revenue_local                   sell_out_revenue_local,
+               sell_out_revenue_usd                     sell_out_revenue_usd,
+               NVL (sell_in_invntry_revenue_local, 0)   sell_in_invntry_revenue_local,
+               NVL (sell_in_invntry_revenue_usd, 0)     sell_in_invntry_revenue_usd
+          FROM dmodm.dmo_sell_in_out_metrics_drvd_f
+         WHERE TRUNC (effective_date) >= ADD_MONTHS ( TRUNC (TO_DATE('&col_Curr1_mon_derived','DD-MON-RRRR'), 'MM'),  -3)
+           and TRUNC (effective_date) <= ADD_MONTHS ( TRUNC (TO_DATE('&col_Curr1_mon_derived','DD-MON-RRRR'), 'MM'),  -1)
+           and Reseller_partner_id    = 9999999999
+               )
+         PIVOT   (
+                  SUM (sell_in_revenue_local)           AS sell_in_revenue_local,
+                  SUM (sell_in_quantity)                AS sell_in_quantity,
+                  SUM (sell_in_revenue_usd)             AS sell_in_revenue_usd,
+                  SUM (sell_out_revenue_local)          AS sell_out_revenue_local,
+                  SUM (sell_out_revenue_usd)            AS sell_out_revenue_usd,
+                  SUM (sell_in_invntry_revenue_local)   AS sell_in_invntry_revenue_loc,
+                  SUM (sell_in_invntry_revenue_usd)     AS sell_in_invntry_revenue_usd
+                  FOR (effective_date) IN (
+                                           '&col_last1_mon_derived' AS M1,
+                                           '&col_last2_mon_derived' AS M2,
+                                           '&col_last3_mon_derived' AS M3
+                                          )
+                 );
+
+    begin
+    DBMS_STATS.GATHER_TABLE_STATS ( ownname => 'DMODW', tabname => 'prv_3_months_derived', estimate_percent => .0001);
+    end;
+/
+*/
+
+	Create table dmodw.sell_out_md_stg_05 as
+        SELECT derived.product_part_id,
+               derived.country_id                                                                           country_id,
+               derived.effective_date,
+               derived.partner_id                                                                           md_partner_id,
+               9999999999                                                                                   reseller_partner_id,
+               derived.product_description,
+               derived.sell_in_quantity,
+			   derived.sell_in_quantity_return,
+               derived.sell_in_sale_price_local,
+               derived.sell_in_sale_price_usd,
+               derived.sell_in_revenue_local,
+               derived.sell_in_revenue_usd,
+               derived.tax_local, 					--tax changed to tax_local
+               derived.tax_usd,						--added new column tax_usd
+               derived.sell_in_ready_to_ship_local,
+               derived.sell_in_constraint_local,
+               derived.sell_in_constraint_usd,
+               derived.inventory_revenue_local,
+               derived.days_of_stock,
+               CASE
+                   WHEN derived.days_of_stock > derived.target_days_allowed
+                   THEN ( ( (  nvl(derived.sell_out_prev_1mon_rev_local,0) +
+                               nvl(derived.sell_out_prev_2mon_rev_local,0) +
+                               nvl(derived.sell_out_prev_3mon_rev_local,0) ) * (derived.target_days_allowed / derived.measurement_days)
+                          ) - derived.inventory_revenue_local)
+                   ELSE 0 END                                                                               revenue_deferral_local,
+               CASE
+                   WHEN derived.days_of_stock > derived.target_days_allowed
+                   THEN ( ( (  nvl(derived.sell_out_prev_1mon_rev_usd,0) +
+                               nvl(derived.sell_out_prev_2mon_rev_usd,0) +
+                               nvl(derived.sell_out_prev_3mon_rev_usd,0) )*  (derived.target_days_allowed / derived.measurement_days)
+                          ) - derived.inventory_revenue_usd)
+                   ELSE 0 END                                                                               revenue_deferral_usd,
+               derived.inventory_revenue_usd,
+               derived.sell_in_cost_local,
+               derived.sell_in_cost_usd,
+               derived.sellin_open_order_local,
+               derived.sellin_open_order_usd,
+               derived.sellin_open_order_count,
+               derived.sell_out_quantity,
+               derived.sell_out_quantity_return,
+               derived.sell_out_sale_price,
+               derived.sell_in_rma_local,
+               derived.sell_in_rma_usd,
+               derived.sell_in_ready_to_ship_usd,
+               derived.sell_out_rma_local,
+               derived.sell_out_rma_usd,
+               derived.sell_out_revenue_local,
+               derived.sell_out_revenue_usd,
+               derived.md_cost_local,
+               derived.md_cost_usd
+          FROM (SELECT Nvl(sellin.product_part_id,sellout.product_part_id)                                  product_part_id,
+                       Nvl(sellin.country_id,sellout.country_id )                                           country_id,
+                       Nvl(sellin.partner_id,sellout.md_partner_id)                                         partner_id,
+                       Nvl(sellin.effective_date,sellout.effective_date)                                    effective_date,
+                       product.product_description                                                          product_description,
+                       sellin.quantity                                                                      sell_in_quantity,
+					   sellin.quantity_return                                                          sell_in_quantity_return,
+                       (sellin.sell_in_revenue_local / Decode(sellin.quantity,0,Null,sellin.quantity))      sell_in_sale_price_local,
+                       (sellin.sell_in_revenue_usd   / Decode(sellin.quantity,0,Null,sellin.quantity))      sell_in_sale_price_usd,
+                       sellin.sell_in_revenue_local,
+                       sellin.sell_in_revenue_usd,
+                       sellin.sell_in_cost_local,
+                       sellin.sell_in_cost_usd,
+                       sellin.tax_local                                                           tax_local,	--tax changed to tax_local
+					   sellin.tax_usd                                                             tax_usd,		--added new column tax_usd
+                       sellin.ready_to_ship_local                                                           sell_in_ready_to_ship_local,
+                       sellin.ready_to_ship_usd                                                             sell_in_ready_to_ship_usd,
+                       sellin.sellin_open_order_local,
+                       sellin.sellin_open_order_usd,
+                       sellin_open_order_count,
+                       /*
+                       (Nvl(sellin.sellin_open_order_local,0)  - Nvl(sellin.ready_to_ship_local,0) )        sell_in_constraint_local,
+                       (Nvl(sellin.sellin_open_order_usd,0)  - Nvl(sellin.ready_to_ship_usd,0))             sell_in_constraint_usd,
+                       */
+                       Null                                                                                 sell_in_constraint_local,
+                       Null                                                                                 sell_in_constraint_usd,
+                       sellin.sell_in_rma_local,
+                       sellin.sell_in_rma_usd,
+                       --sellout.reseller_partner_id,
+                       sellout.sell_out_revenue_local,
+                       sellout.sell_out_revenue_usd,
+                       sellout.quantity sell_out_quantity,
+                       sellout.quantity_return sell_out_quantity_return,
+                       (sellout.sell_out_revenue_usd / Decode(sellout.quantity,0,Null,sellout.quantity))   sell_out_sale_price,
+                       sellout.sell_out_rma_local,
+                       sellout.sell_out_rma_usd,
+                       (  NVL(LAST1_MON_DERIVED.sell_in_revenue_local_1,0)
+                        + NVL(LAST2_MON_DERIVED.sell_in_revenue_local_2,0)
+                        + NVL(LAST3_MON_DERIVED.sell_in_revenue_local_3,0) ) /
+                       ( Case When (  Nvl(LAST1_MON_DERIVED.sell_in_quantity_1,0)
+                                    + Nvl(LAST2_MON_DERIVED.sell_in_quantity_2,0)
+                                    + Nvl(LAST3_MON_DERIVED.sell_in_quantity_3,0) ) > 0
+                              Then  Nvl(LAST1_MON_DERIVED.sell_in_quantity_1,0)
+                                  + Nvl(LAST2_MON_DERIVED.sell_in_quantity_2,0)
+                                  + Nvl(LAST3_MON_DERIVED.sell_in_quantity_3,0)
+                              Else NULL
+                          end
+                        )                                                                                   md_cost_local,
+                       (  NVL(LAST1_MON_DERIVED.sell_in_revenue_usd_1,0)
+                        + NVL(LAST2_MON_DERIVED.sell_in_revenue_usd_2,0)
+                        + NVL(LAST3_MON_DERIVED.sell_in_revenue_usd_3,0) ) /
+                       ( Case When (  Nvl(LAST1_MON_DERIVED.sell_in_quantity_1,0)
+                                    + Nvl(LAST2_MON_DERIVED.sell_in_quantity_2,0)
+                                    + Nvl(LAST3_MON_DERIVED.sell_in_quantity_3,0) ) > 0
+                              Then  Nvl(LAST1_MON_DERIVED.sell_in_quantity_1,0)
+                                  + Nvl(LAST2_MON_DERIVED.sell_in_quantity_2,0)
+                                  + Nvl(LAST3_MON_DERIVED.sell_in_quantity_3,0)
+                              Else NULL
+                          end
+                        )                                                                                   md_cost_usd,
+                       NVL (LAST1_MON_DERIVED.sell_in_invntry_rev_usd_1, 0) +
+                       NVL (sellin.sell_in_revenue_usd, 0) - NVL (sellout.sell_out_revenue_usd, 0)          inventory_revenue_usd,
+                       NVL (LAST1_MON_DERIVED.sell_in_invntry_rev_local_1, 0) +
+                       NVL (sellin.sell_in_revenue_local, 0) - NVL (sellout.sell_out_revenue_local, 0)      inventory_revenue_local,
+                       /*
+                       (Case When sellin.effective_date = sellin.Max_effective_date Then
+                                NVL (LAST1_MON_DERIVED.sell_in_invntry_rev_usd_1, 0)
+                            Else 0 End)
+                            +
+                       NVL (sellin.sell_in_revenue_usd, 0) - NVL (sellout.sell_out_revenue_usd, 0)          inventory_revenue_usd,
+                       (Case When sellin.effective_date = sellin.Max_effective_date Then
+                               NVL (LAST1_MON_DERIVED.sell_in_invntry_rev_local_1, 0)
+                            Else 0 End)
+                            +
+                       NVL (sellin.sell_in_revenue_local, 0) - NVL (sellout.sell_out_revenue_local, 0)      inventory_revenue_local,
+                       */
+                       NVL ( LAST1_MON_DERIVED.sell_out_revenue_usd_1,
+                             ( LAST1_MON_DERIVED.sell_in_revenue_usd_1 +
+                                ( LAST1_MON_DERIVED.sell_in_revenue_usd_1 * country_info.average_markup / 100) )
+                           )                                                                                sell_out_prev_1mon_rev_usd,
+                       NVL ( LAST2_MON_DERIVED.sell_out_revenue_usd_2,
+                             ( LAST2_MON_DERIVED.sell_in_revenue_usd_2 +
+                                ( LAST2_MON_DERIVED.sell_in_revenue_usd_2 * country_info.average_markup / 100) )
+                           )                                                                                sell_out_prev_2mon_rev_usd,
+                       NVL ( LAST3_MON_DERIVED.sell_out_revenue_usd_3,
+                             ( LAST3_MON_DERIVED.sell_in_revenue_usd_3 +
+                                ( LAST3_MON_DERIVED.sell_in_revenue_usd_3 * country_info.average_markup / 100) )
+                           )                                                                                sell_out_prev_3mon_rev_usd,
+                       NVL ( LAST1_MON_DERIVED.sell_out_revenue_local_1,
+                             ( LAST1_MON_DERIVED.sell_in_revenue_local_1 +
+                                ( LAST1_MON_DERIVED.sell_in_revenue_local_1 * country_info.average_markup  / 100) )
+                           )                                                                                sell_out_prev_1mon_rev_local,
+                       NVL ( LAST2_MON_DERIVED.sell_out_revenue_local_2,
+                             ( LAST2_MON_DERIVED.sell_in_revenue_local_2 +
+                                ( LAST2_MON_DERIVED.sell_in_revenue_local_2 * country_info.average_markup  / 100) )
+                           )                                                                                sell_out_prev_2mon_rev_local,
+                       NVL ( LAST3_MON_DERIVED.sell_out_revenue_local_3,
+                             ( LAST3_MON_DERIVED.sell_in_revenue_local_3 +
+                                ( LAST3_MON_DERIVED.sell_in_revenue_local_3 * country_info.average_markup  / 100) )
+                           )                                                                                sell_out_prev_3mon_rev_local,
+						--++RFC: 118229
+						-------------------------------------------------------------------------------------------------------
+                       ( ( NVL (LAST1_MON_DERIVED.sell_in_invntry_rev_usd_1, 0)  )
+                         / case
+                            when (nvl(LAST1_MON_DERIVED.sell_out_revenue_usd_1,0) + nvl(LAST2_MON_DERIVED.sell_out_revenue_usd_2,0) + nvl(LAST3_MON_DERIVED.sell_out_revenue_usd_3,0)) > 0
+                           Then (nvl(LAST1_MON_DERIVED.sell_out_revenue_usd_1,0) + nvl(LAST2_MON_DERIVED.sell_out_revenue_usd_2,0) + nvl(LAST3_MON_DERIVED.sell_out_revenue_usd_3,0))
+                           else null end
+                       ) * NVL (country_info.measurement_days, 0)                                   days_of_stock,
+					   -------------------------------------------------------------------------------------------------------
+					   --RFC: 118229
+                       country_info.target_days_allowed                                             target_days_allowed,
+                       country_info.average_markup                                                  average_markup,
+                       country_info.measurement_days                                                measurement_days
+                  FROM (  SELECT base.product_part_id,
+                                 base.partner_id,
+                                 base.country_id,
+                                 TRUNC (base.invoice_date_exp, 'MM')                                effective_date,
+                                 (Select MAX(Trunc(invoice_date,'MM')) from dmodm.dmo_sell_in_metrics_base_f) Max_effective_date,
+                                 SUM (base.quantity)                                                quantity,
+								 SUM (base.quantity_return)                                         quantity_return,
+                                 SUM (revenue_local)                                                sell_in_revenue_local,
+                                 SUM (revenue_usd)                                                  sell_in_revenue_usd,
+								 --tax change included
+                                 SUM (tax_local)                                                    tax_local,
+								 SUM (tax_usd)                                                      tax_usd,
+                                 SUM (base.cost_local * base.quantity)                              sell_in_cost_local,
+                                 SUM (base.cost_usd * base.quantity)                                sell_in_cost_usd,
+                                 /*
+                                 MIN (slin_opn_pickd.ready_to_ship_local)                           ready_to_ship_local,
+                                 MIN (slin_opn_pickd.ready_to_ship_usd)                             ready_to_ship_usd,
+                                 MIN (slin_opn_pickd.open_order_local)                              sellin_open_order_local,
+                                 MIN (slin_opn_pickd.open_order_usd)                                sellin_open_order_usd,
+                                 MIN (slin_opn_pickd.openordercount)                                sellin_open_order_count,
+                                 */
+                                 Null                                                               ready_to_ship_local,
+                                 Null                                                               ready_to_ship_usd,
+                                 Null                                                               sellin_open_order_local,
+                                 Null                                                               sellin_open_order_usd,
+                                 Null                                                               sellin_open_order_count,
+                                 SUM (rma_local)                                                    sell_in_rma_local,
+                                 SUM (rma_usd)                                                      sell_in_rma_usd
+                            FROM (SELECT CASE WHEN order_exp_flag = 'Y'
+                                              THEN order_exp_invoice_date
+                                              ELSE invoice_date
+                                          END                                                       invoice_date_exp,
+                                         t1.*
+                                    FROM dmodm.dmo_sell_in_metrics_base_f t1
+                                   WHERE invoice_Date IS NOT NULL
+                                 ) base
+                            GROUP BY base.partner_id, base.product_part_id, base.country_id, TRUNC (base.invoice_date_exp, 'MM')) sellin
+                       FULL OUTER JOIN (  SELECT sellout_base.product_part_id,
+                                                 sellout_base.md_partner_id,
+                                                 sellout_base.country_id,
+                                                 TRUNC ( sellout_base.md_invoice_date, 'MM') effective_date,
+                                                 SUM (sellout_base.quantity)                 quantity,
+                                                 SUM (sellout_base.quantity_return)          quantity_return,
+                                                 SUM (sellout_base.rma_local)                sell_out_rma_local,
+                                                 SUM (sellout_base.rma_usd)                  sell_out_rma_usd,
+                                                 SUM (sellout_base.revenue_local)            sell_out_revenue_local,
+                                                 SUM (sellout_base.revenue_usd)              sell_out_revenue_usd
+                                            FROM (SELECT * FROM dmodm.dmo_sell_out_metrics_base_f
+                                                   WHERE
+                                                         -- TRUNC (md_invoice_date,'MM') = TRUNC (SYSDATE, 'MM') AND
+                                                         (partner_exp_correction_flag IS NULL OR partner_exp_correction_flag = 'Y')
+                                                         AND (product_exp_correction_flag IS NULL OR product_exp_correction_flag = 'Y')) sellout_base
+                                                   GROUP BY sellout_base.md_partner_id,
+                                                         sellout_base.product_part_id,
+                                                         sellout_base.country_id,
+                                                         TRUNC ( sellout_base.md_invoice_date, 'MM')) sellout
+                            ON  sellin.effective_date = sellout.effective_date
+                            AND sellin.product_part_id = sellout.product_part_id
+                            AND sellin.partner_id = sellout.md_partner_id
+                            --AND sellin.country_code    = sellout.country_code
+                       LEFT OUTER JOIN (SELECT country_id,
+                                               target_days_allowed,
+                                               measurement_days,
+                                               average_markup FROM dmodm.dmo_country_d where active_ind = 'AC'
+                                        ) country_info
+                            ON sellin.country_id = country_info.country_id
+                       LEFT OUTER JOIN (SELECT product_part_id, product_description
+                                          FROM dmodm.dmo_product_catalog_d where active_ind = 'AC') product
+                            ON product.product_part_id = sellin.product_part_id
+                      /* LEFT OUTER JOIN (SELECT * from DMODW.PRV_3_MONTHS_DERIVED) LAST123_MON_DERIVED    --sry
+                            ON SELLIN.PARTNER_ID       = LAST123_MON_DERIVED.MD_PARTNER_ID
+                            AND sellin.product_part_id = LAST123_MON_DERIVED.PRODUCT_PART_ID*/
+                         LEFT OUTER JOIN (SELECT product_part_id,
+                                               partner_id,
+                                               effective_Date,
+                                               country_id,
+                                               NVL (sell_in_revenue_local, 0)           sell_in_revenue_local_1,
+                                               NVL (sell_in_quantity, 0)                sell_in_quantity_1,
+                                               NVL (sell_in_revenue_usd, 0)             sell_in_revenue_usd_1,
+                                               NVL (sell_out_revenue_local, 0)          sell_out_revenue_local_1,
+                                               NVL (sell_out_revenue_usd, 0)            sell_out_revenue_usd_1,
+                                               NVL (sell_in_invntry_revenue_local, 0)   sell_in_invntry_rev_local_1,
+                                               NVL (sell_in_invntry_revenue_usd, 0)     sell_in_invntry_rev_usd_1
+                                          FROM dmodm.DMO_SELL_IN_OUT_METRICS_DRVD_F
+                                             ) LAST1_MON_DERIVED
+                            ON  SELLIN.PARTNER_ID = LAST1_MON_DERIVED.PARTNER_ID
+                            AND sellin.product_part_id = LAST1_MON_DERIVED.PRODUCT_PART_ID
+                            AND LAST1_MON_DERIVED.effective_date = ADD_MONTHS ( TRUNC (SELLIN.effective_date, 'MM'),  -1)
+                            AND LAST1_MON_DERIVED.country_id=sellin.country_id
+                          Left OUTER JOIN (
+                                        SELECT product_part_id,
+                                               partner_id,
+                                               effective_Date,
+                                               country_id,
+                                               NVL (sell_in_revenue_local, 0)           sell_in_revenue_local_2,
+                                               NVL (sell_in_quantity, 0)                sell_in_quantity_2,
+                                               NVL (sell_in_revenue_usd, 0)             sell_in_revenue_usd_2,
+                                               NVL (sell_out_revenue_local, 0)          sell_out_revenue_local_2,
+                                               NVL (sell_out_revenue_usd, 0)            sell_out_revenue_usd_2,
+                                               NVL (sell_in_invntry_revenue_local, 0)   sell_in_invntry_rev_local_2,
+                                               NVL (sell_in_invntry_revenue_usd, 0)     sell_in_invntry_rev_usd_2
+                                          FROM dmodm.DMO_SELL_IN_OUT_METRICS_DRVD_F
+                                         ) LAST2_MON_DERIVED
+                            ON  SELLIN.PARTNER_ID = LAST2_MON_DERIVED.PARTNER_ID
+                            AND sellin.product_part_id = LAST2_MON_DERIVED.PRODUCT_PART_ID
+                            ANd LAST2_MON_DERIVED.effective_date = ADD_MONTHS ( TRUNC (SELLIN.effective_date, 'MM'),  -2)
+                            AND LAST2_MON_DERIVED.country_id=sellin.country_id
+                            Left OUTER JOIN (
+                                        SELECT product_part_id,
+                                               partner_id,
+                                               effective_Date,
+                                               country_id,
+                                               NVL (sell_in_revenue_local, 0)           sell_in_revenue_local_3,
+                                               NVL (sell_in_quantity, 0)                sell_in_quantity_3,
+                                               NVL (sell_in_revenue_usd, 0)             sell_in_revenue_usd_3,
+                                               NVL (sell_out_revenue_local, 0)          sell_out_revenue_local_3,
+                                               NVL (sell_out_revenue_usd, 0)            sell_out_revenue_usd_3,
+                                               NVL (sell_in_invntry_revenue_local, 0)   sell_in_invntry_rev_local_3,
+                                               NVL (sell_in_invntry_revenue_usd, 0)     sell_in_invntry_rev_usd_3
+                                          FROM dmodm.DMO_SELL_IN_OUT_METRICS_DRVD_F
+                                         ) LAST3_MON_DERIVED
+                            ON  SELLIN.PARTNER_ID = LAST3_MON_DERIVED.PARTNER_ID
+                            AND sellin.product_part_id = LAST3_MON_DERIVED.PRODUCT_PART_ID
+                            ANd LAST3_MON_DERIVED.effective_date = ADD_MONTHS ( TRUNC (SELLIN.effective_date, 'MM'),  -3)
+                            AND LAST3_MON_DERIVED.country_id=sellin.country_id) derived
+        UNION
+        -- For Open order details from sell_in fact as seperate records
+        SELECT         derived_OO.product_part_id,
+                       derived_OO.country_id,
+                       derived_OO.effective_date,
+                       derived_OO.md_partner_id,
+                       0                                              reseller_partner_id,
+                       Null product_description,
+                       Null sell_in_quantity,
+					   Null sell_in_quantity_return,
+                       Null sell_in_sale_price_local,
+                       Null sell_in_sale_price_usd,
+                       Null sell_in_revenue_local,
+                       Null sell_in_revenue_usd,
+                       Null tax_local,
+                       Null tax_usd,
+                       derived_OO.ready_to_ship_local                 sell_in_ready_to_ship_local,
+                       (Nvl(derived_OO.open_order_local,0)  - Nvl(derived_OO.ready_to_ship_local,0) )        sell_in_constraint_local,
+                       (Nvl(derived_OO.open_order_usd,0)    - Nvl(derived_OO.ready_to_ship_usd,0))             sell_in_constraint_usd,
+                       Null inventory_revenue_local,
+                       Null days_of_stock,
+                       Null revenue_deferral_local,
+                       Null revenue_deferral_usd,
+                       Null inventory_revenue_usd,
+                       Null sell_in_cost_local,
+                       Null sell_in_cost_usd,
+                       derived_OO.open_order_local                     sellin_open_order_local,
+                       derived_OO.open_order_usd                       sellin_open_order_usd,
+                       derived_OO.openordercount                       sellin_open_order_count,
+                       Null sell_out_quantity,
+                       Null sell_out_quantity_return,
+                       Null sell_out_sale_price,
+                       Null sell_in_rma_local,
+                       Null sell_in_rma_usd,
+                       derived_OO.ready_to_ship_usd                    sell_in_ready_to_ship_usd,
+                       Null        sell_out_rma_local,
+                       Null        sell_out_rma_usd,
+                       Null        sell_out_revenue_local,
+                       Null        sell_out_revenue_usd,
+                       Null,
+                       Null
+                  from
+                       (
+                         select
+                               fact.product_part_id,
+                               fact.partner_id                                           md_partner_id,
+                               fact.country_id,
+                               Inv_max.invoice_date_max                                  effective_date,
+                               COUNT (*)                                                 openordercount,
+                               SUM (CASE WHEN order_line_status = 'PICKED'
+                                         THEN CASE WHEN UPPER (fact.currency_code) = 'USD'
+                                                   THEN quantity * sale_price
+                                                   ELSE quantity * sale_price / exchange_rate
+                                               END
+                                         ELSE 0
+                                     END )                                               ready_to_ship_usd,
+                               SUM (CASE WHEN order_line_status = 'PICKED'
+                                         THEN CASE WHEN UPPER (fact.currency_code) <>  'USD'
+                                                   THEN quantity * sale_price
+                                                   ELSE quantity * sale_price * exchange_rate
+                                               END
+                                         ELSE 0
+                                     END )                                               ready_to_ship_local,
+                               SUM (CASE WHEN UPPER (fact.currency_code) = 'USD'
+                                         THEN quantity * sale_price
+                                         ELSE quantity * sale_price / exchange_rate
+                                     END )                                               open_order_usd,
+                               SUM (CASE WHEN UPPER (fact.currency_code) <> 'USD'
+                                         THEN  quantity * sale_price
+                                         ELSE quantity * sale_price  * exchange_rate
+                                     END )                                               open_order_local
+                         FROM dmodm.dmo_sell_in_metrics_base_f fact,
+                              (
+                                Select MAX(Trunc(invoice_date,'MM'))  invoice_date_max
+                                 from dmodm.dmo_sell_in_metrics_base_f Inv
+                               ) Inv_max
+                        WHERE fact.order_line_status not in ('CANCELLED', 'CLOSED')
+                        GROUP BY fact.partner_id,
+                                 fact.product_part_id,
+                                 fact.country_id,
+                                 Inv_max.invoice_date_max
+                      ) derived_OO
+        UNION
+        SELECT         derived2.product_part_id,
+                       derived2.country_id                  country_id,
+                       TRUNC(derived2.md_invoice_date,'MM') effective_date,
+                       derived2.md_partner_id               md_partner_id,
+                       derived2.reseller_partner_id         reseller_partner_id,
+                       Null product_description,
+                       Null sell_in_quantity,
+					   Null sell_in_quantity_return,
+                       Null sell_in_sale_price_local,
+                       Null sell_in_sale_price_usd,
+                       Null sell_in_revenue_local,
+                       Null sell_in_revenue_usd,
+                       Null tax_local,
+                       Null tax_usd,
+                       Null sell_in_ready_to_ship_local,
+                       Null sell_in_constraint_local,
+                       Null sell_in_constraint_usd,
+                       Null inventory_revenue_local,
+                       Null days_of_stock,
+                       Null revenue_deferral_local,
+                       Null revenue_deferral_usd,
+                       Null inventory_revenue_usd,
+                       Null sell_in_cost_local,
+                       Null sell_in_cost_usd,
+                       Null sellin_open_order_local,
+                       Null sellin_open_order_usd,
+                       Null sellin_open_order_count,
+                       Sum(derived2.quantity)               sell_out_quantity,
+                       Sum(derived2.quantity_return)               sell_out_quantity_return,
+                       Null sell_out_sale_price,
+                       Null sell_in_rma_local,
+                       Null sell_in_rma_usd,
+                       Null sell_in_ready_to_ship_usd,
+                       Sum(derived2.rma_local)              sell_out_rma_local,
+                       Sum(derived2.rma_usd)                sell_out_rma_usd,
+                       Sum(derived2.revenue_local)          sell_out_revenue_local,
+                       Sum(derived2.revenue_usd)            sell_out_revenue_usd,
+                       (CASE WHEN UPPER (MIN(product.currency_code)) <> 'USD'
+                            THEN   Sum(derived2.quantity) * MIN(product.distribution_price)
+                            ELSE Sum(derived2.quantity) * MIN(product.distribution_price)  * MIN(derived2.exchange_rate)
+                            END )                            md_cost_local,
+                       (CASE WHEN UPPER (MIN(product.currency_code)) = 'USD'
+                             THEN Sum(derived2.quantity) * MIN(product.distribution_price)
+                             ELSE Sum(derived2.quantity) * MIN(product.distribution_price) / MIN(derived2.exchange_rate)
+                                                END )         md_cost_usd
+                FROM   dmodm.dmo_sell_out_metrics_base_f derived2
+                       Left OUTER JOIN dmodm.dmo_product_catalog_d product
+                       on (derived2.product_part_id = product.product_part_id and
+                           derived2.country_id      = product.country_id      and
+                           product.active_ind = 'AC')
+               WHERE
+                     -- TRUNC (md_invoice_date,'MM') = TRUNC (SYSDATE, 'MM') AND
+                     (partner_exp_correction_flag IS NULL OR partner_exp_correction_flag = 'Y')
+                     AND (product_exp_correction_flag IS NULL OR product_exp_correction_flag = 'Y')
+                     AND Reseller_partner_id Is Not Null
+               GROUP BY md_partner_id,
+                        derived2.product_part_id,
+                        reseller_partner_id,
+                        derived2.country_id,
+                        TRUNC ( md_invoice_date, 'MM') ;
+
+
+    begin
+    DBMS_STATS.GATHER_TABLE_STATS ( ownname => 'DMODW', tabname => 'sell_out_md_stg_05', estimate_percent => .0001);
+    end;
+/
+
+    -------------------------------------------------------------------------------------------------------
+    -- Merge record into DMO_SELL_IN_OUT_METRICS_DRVD_F table
+    -------------------------------------------------------------------------------------------------------
+
+    merge into DMODM.DMO_SELL_IN_OUT_METRICS_DRVD_F base
+    using (
+            -- select t1.* from (
+            -- select row_number() over (partition by product_part_id,  md_partner_id, reseller_partner_id, effective_date
+            --                                              order by product_part_id asc ) as row_rank_temp,
+            --         t2.* from dmodw.sell_out_md_stg_05 t2
+            -- ) t1
+            -- where row_rank_temp = 1
+            select * from dmodw.sell_out_md_stg_05
+          ) temp
+    on
+    (
+        temp.product_part_id=base.product_part_id and
+        temp.md_partner_id = base.md_partner_id and
+        temp.reseller_partner_id = base.reseller_partner_id and
+        trunc(temp.effective_date,'MM')=trunc(base.effective_date,'MM')
+    )
+    WHEN MATCHED THEN
+    UPDATE SET
+            BASE.product_description=TEMP.product_description,
+            BASE.partner_id         = Case When (temp.reseller_partner_id = 9999999999
+											  or temp.reseller_partner_id = 0)
+											Then temp.md_partner_id Else temp.reseller_partner_id End,
+            BASE.sell_in_quantity=TEMP.sell_in_quantity,
+			BASE.sell_in_quantity_return=TEMP.sell_in_quantity_return,
+            BASE.country_id=TEMP.country_id,
+            BASE.Sell_in_sale_price=TEMP.Sell_in_sale_price_usd,
+            BASE.sell_in_revenue_local=TEMP.sell_in_revenue_local,
+            BASE.sell_in_revenue_usd=TEMP.sell_in_revenue_usd,
+            BASE.SELL_IN_tax_local=TEMP.tax_local,	--tax changed to tax_local
+			BASE.SELL_IN_tax_usd=TEMP.tax_usd,		--new column tax_usd added
+            BASE.sell_in_ready_to_ship_local=TEMP.sell_in_ready_to_ship_local,
+            BASE.sell_in_ready_to_ship_usd=TEMP.sell_in_ready_to_ship_usd,
+            BASE.sell_in_constraint_local=TEMP.sell_in_constraint_local,
+            BASE.sell_in_constraint_usd=TEMP.sell_in_constraint_usd,
+            BASE.SELL_IN_invntry_revenue_local=TEMP.inventory_revenue_local,
+            BASE.SELL_IN_invntry_revenue_usd=TEMP.inventory_revenue_usd,
+            BASE.SELL_IN_days_of_stock=TEMP.days_of_stock,
+            BASE.sell_in_rma_local=TEMP.sell_in_rma_local,
+            BASE.sell_in_rma_usd=TEMP.sell_in_rma_usd,
+            BASE.SELL_IN_revenue_deferalS_local=TEMP.revenue_deferral_local,
+            BASE.SELL_IN_revenue_deferalS_usd=TEMP.revenue_deferral_usd,
+            BASE.sell_in_cost_local=TEMP.sell_in_cost_local,
+            BASE.sell_in_cost_usd=TEMP.sell_in_cost_usd,
+            BASE.sell_in_open_order_local=TEMP.sellin_open_order_local,
+            BASE.sell_in_open_order_usd=TEMP.sellin_open_order_usd,
+            BASE.sell_in_open_order_count=TEMP.sellin_open_order_count,
+            BASE.sell_out_quantity=TEMP.sell_out_quantity,
+			BASE.sell_out_quantity_return=TEMP.sell_out_quantity_return,
+            BASE.sell_out_sale_price=TEMP.sell_out_sale_price,
+            BASE.sell_out_rma_local=TEMP.sell_out_rma_local,
+            BASE.sell_out_rma_usd=TEMP.sell_out_rma_usd,
+            BASE.sell_out_revenue_local=TEMP.sell_out_revenue_local,
+            BASE.sell_out_revenue_usd=TEMP.sell_out_revenue_usd,
+            BASE.sell_out_md_cost_local=TEMP.md_cost_local,
+            BASE.sell_out_md_cost_USD=TEMP.md_cost_USD,
+            BASE.modification_user       = '$BATCH_ID',
+            BASE.modification_datetime   = sysdate
+    when not matched then
+    insert
+    (
+        base.product_part_id,
+        base.md_partner_id,
+        base.reseller_partner_id,
+        base.partner_id,
+        base.country_id,
+        base.effective_date,
+        base.product_description,
+        base.sell_in_quantity,
+		base.sell_in_quantity_return,
+        base.Sell_in_sale_price,
+        base.sell_in_revenue_local,
+        base.sell_in_revenue_usd,
+        base.SELL_IN_tax_local,
+		base.SELL_IN_tax_usd,
+        base.sell_in_ready_to_ship_local,
+        base.sell_in_ready_to_ship_usd,
+        base.sell_in_constraint_local,
+        base.sell_in_constraint_usd,
+        base.SELL_IN_invntry_revenue_local,
+        base.SELL_IN_invntry_revenue_usd,
+        base.SELL_IN_days_of_stock,
+        base.sell_in_rma_local,
+        base.sell_in_rma_usd,
+        base.SELL_IN_revenue_deferalS_local,
+        base.SELL_IN_revenue_deferalS_usd,
+        base.sell_in_cost_local,
+        base.sell_in_cost_usd,
+        base.sell_in_open_order_local,
+        base.sell_in_open_order_usd,
+        base.sell_in_open_order_count,
+        base.sell_out_quantity,
+		base.sell_out_quantity_return,
+        base.sell_out_sale_price,
+        base.sell_out_rma_local,
+        base.sell_out_rma_usd,
+        base.sell_out_revenue_local,
+        base.sell_out_revenue_usd,
+        base.sell_out_md_cost_local,
+        base.sell_out_md_cost_usd,
+        base.creation_user,
+        base.creation_datetime
+    )
+    values
+    (
+        temp.product_part_id,temp.md_partner_id,temp.reseller_partner_id,Case When temp.reseller_partner_id = 9999999999 Then temp.md_partner_id Else temp.reseller_partner_id End,
+        temp.country_id,temp.effective_date,
+        temp.product_description,temp.sell_in_quantity,temp.sell_in_quantity_return,temp.Sell_in_sale_price_usd,
+        temp.sell_in_revenue_local,temp.sell_in_revenue_usd,temp.tax_local,temp.tax_usd,
+        temp.sell_in_ready_to_ship_local,temp.sell_in_ready_to_ship_usd,temp.sell_in_constraint_local,
+        temp.sell_in_constraint_usd,trunc(temp.inventory_revenue_local,5),trunc(temp.inventory_revenue_usd,6),
+        temp.days_of_stock,temp.sell_in_rma_local,temp.sell_in_rma_local,
+        temp.revenue_deferral_local,temp.revenue_deferral_usd,
+        temp.sell_in_cost_local,temp.sell_in_cost_usd,temp.sellin_open_order_local,
+        temp.sellin_open_order_usd,temp.sellin_open_order_count,temp.sell_out_quantity,temp.sell_out_quantity_return,
+        temp.sell_out_sale_price,temp.sell_out_rma_local,temp.sell_out_rma_usd,
+        temp.sell_out_revenue_local,temp.sell_out_revenue_usd,temp.md_cost_local,
+        temp.md_cost_usd,'$BATCH_ID', sysdate
+    );
+
+	COMMIT;
+
+exit
+/
+!EOF
+
+}
+
+#++RFC:1199933
+#---------------------------------------------------------------------------------------------------------
+pop_drvd_fact_dsi()
+{
+
+    runsqlplus<<!EOF
+
+    set time on
+    set timing on
+    set echo on
+    set lines 132
+    set serveroutput on
+
+    whenever oserror exit failure;
+
+    ------------------------------------------------------------------------------------------------------------------------
+    -- Remove temporary tables from previous run if they exist.
+    ------------------------------------------------------------------------------------------------------------------------
+    whenever sqlerror continue;
+
+    drop table dmodw.sell_out_md_stg_05;
+
+    whenever sqlerror exit failure rollback;
+
+    ----------------------------------------------------------------------------------------------------------
+    -- create stagging records to compute derived metrics and merge later into DMO_SELL_IN_OUT_METRICS_DRVD_F
+    ----------------------------------------------------------------------------------------------------------
+
+	Create table dmodw.sell_out_md_stg_05 as
+        SELECT derived.product_part_id,
+               derived.country_id                                                                           country_id,
+               derived.effective_date,
+               derived.partner_id                                                                           md_partner_id,
+			   derived.partner_id                                                                           partner_id,
+               9999999999                                                                                   reseller_partner_id,
+               derived.sell_in_revenue_local,
+               derived.sell_in_revenue_usd,
+               derived.days_of_stock as 																	sell_in_days_of_stock,
+               derived.sell_out_revenue_local,
+               derived.sell_out_revenue_usd,
+			   derived.inventory_revenue_usd as 															sell_in_invntry_revenue_usd,
+			   derived.inventory_revenue_local as 															sell_in_invntry_revenue_local
+		  FROM (SELECT Nvl(sellin.product_part_id,sellout.product_part_id)                                  product_part_id,
+                       Nvl(sellin.country_id,sellout.country_id )                                           country_id,
+                       Nvl(sellin.partner_id,sellout.md_partner_id)                                         partner_id,
+                       Nvl(sellin.effective_date,sellout.effective_date)                                    effective_date,
+                       sellin.sell_in_revenue_local,
+                       sellin.sell_in_revenue_usd,
+                       sellout.sell_out_revenue_local,
+                       sellout.sell_out_revenue_usd,
+					   NVL (sellin.sell_in_revenue_local, 0) - NVL (sellout.sell_out_revenue_local, 0)      inventory_revenue_local,
+					   NVL (sellin.sell_in_revenue_usd, 0) - NVL (sellout.sell_out_revenue_usd, 0)          inventory_revenue_usd,
+                       ( ( NVL (LAST1_MON_DERIVED.sell_in_invntry_rev_usd_1, 0)  )
+                         / case
+                            when (nvl(LAST1_MON_DERIVED.sell_out_revenue_usd_1,0) + nvl(LAST2_MON_DERIVED.sell_out_revenue_usd_2,0) + nvl(LAST3_MON_DERIVED.sell_out_revenue_usd_3,0)) > 0
+                           Then (nvl(LAST1_MON_DERIVED.sell_out_revenue_usd_1,0) + nvl(LAST2_MON_DERIVED.sell_out_revenue_usd_2,0) + nvl(LAST3_MON_DERIVED.sell_out_revenue_usd_3,0))
+                           else null end
+                       ) * NVL (country_info.measurement_days, 0)                                   days_of_stock
+				  FROM (  SELECT base.product_part_id,
+                                 base.partner_id,
+                                 base.country_id,
+                                 TRUNC (base.invoice_date_exp, 'MM')                                effective_date,
+                                 SUM (revenue_local)                                                sell_in_revenue_local,
+                                 SUM (revenue_usd)                                                  sell_in_revenue_usd
+                            FROM (SELECT CASE WHEN order_exp_flag = 'Y'
+                                              THEN order_exp_invoice_date
+                                              ELSE invoice_date
+                                          END                                                       invoice_date_exp,
+                                         t1.*
+                                    FROM dmodm.dmo_sell_in_metrics_base_f t1
+                                   WHERE invoice_Date IS NOT NULL
+                                 ) base
+                        GROUP BY base.partner_id, base.product_part_id, base.country_id, TRUNC (base.invoice_date_exp, 'MM')) sellin
+                       FULL OUTER JOIN (  SELECT sellout_base.product_part_id,
+                                                 sellout_base.md_partner_id,
+                                                 sellout_base.country_id,
+                                                 TRUNC ( sellout_base.md_invoice_date, 'MM') effective_date,
+                                                 SUM (sellout_base.revenue_local)            sell_out_revenue_local,
+                                                 SUM (sellout_base.revenue_usd)              sell_out_revenue_usd
+                                            FROM (SELECT * FROM dmodm.dmo_sell_out_metrics_base_f
+                                                   WHERE(partner_exp_correction_flag IS NULL OR partner_exp_correction_flag = 'Y')
+                                                   AND (product_exp_correction_flag IS NULL OR product_exp_correction_flag = 'Y')
+												   -----------------------------------------------------------
+												   AND revenue_usd > 1) sellout_base
+												   -----------------------------------------------------------
+                                            GROUP BY sellout_base.md_partner_id,
+													 sellout_base.product_part_id,
+                                                     sellout_base.country_id,
+                                                     TRUNC ( sellout_base.md_invoice_date, 'MM')) sellout
+                            ON  sellin.effective_date = sellout.effective_date
+                            AND sellin.product_part_id = sellout.product_part_id
+                            AND sellin.partner_id = sellout.md_partner_id
+                       LEFT OUTER JOIN (SELECT country_id,
+                                               target_days_allowed,
+                                               measurement_days,
+                                               average_markup FROM dmodm.dmo_country_d where active_ind = 'AC'
+                                        ) country_info
+                            ON sellin.country_id = country_info.country_id
+                       LEFT OUTER JOIN (SELECT product_part_id, product_description
+                                          FROM dmodm.dmo_product_catalog_d where active_ind = 'AC') product
+                            ON product.product_part_id = sellin.product_part_id
+                         LEFT OUTER JOIN (SELECT product_part_id,
+                                               partner_id,
+                                               effective_Date,
+                                               country_id,
+                                               NVL (sell_in_revenue_local, 0)           sell_in_revenue_local_1,
+                                               NVL (sell_in_revenue_usd, 0)             sell_in_revenue_usd_1,
+                                               NVL (sell_out_revenue_local, 0)          sell_out_revenue_local_1,
+                                               NVL (sell_out_revenue_usd, 0)            sell_out_revenue_usd_1,
+                                               NVL (sell_in_invntry_revenue_local, 0)   sell_in_invntry_rev_local_1,
+                                               NVL (sell_in_invntry_revenue_usd, 0)     sell_in_invntry_rev_usd_1
+                                          FROM dmodw.DSI_DERIVED_METRIC_STG
+                                             ) LAST1_MON_DERIVED
+                            ON  SELLIN.PARTNER_ID = LAST1_MON_DERIVED.PARTNER_ID
+                            AND sellin.product_part_id = LAST1_MON_DERIVED.PRODUCT_PART_ID
+                            AND LAST1_MON_DERIVED.effective_date = ADD_MONTHS ( TRUNC (SELLIN.effective_date, 'MM'),  -1)
+                            AND LAST1_MON_DERIVED.country_id=sellin.country_id
+                          Left OUTER JOIN (
+                                        SELECT product_part_id,
+                                               partner_id,
+                                               effective_Date,
+                                               country_id,
+                                               NVL (sell_in_revenue_local, 0)           sell_in_revenue_local_2,
+                                               NVL (sell_in_revenue_usd, 0)             sell_in_revenue_usd_2,
+                                               NVL (sell_out_revenue_local, 0)          sell_out_revenue_local_2,
+                                               NVL (sell_out_revenue_usd, 0)            sell_out_revenue_usd_2,
+                                               NVL (sell_in_invntry_revenue_local, 0)   sell_in_invntry_rev_local_2,
+                                               NVL (sell_in_invntry_revenue_usd, 0)     sell_in_invntry_rev_usd_2
+                                          FROM dmodw.DSI_DERIVED_METRIC_STG
+                                         ) LAST2_MON_DERIVED
+                            ON  SELLIN.PARTNER_ID = LAST2_MON_DERIVED.PARTNER_ID
+                            AND sellin.product_part_id = LAST2_MON_DERIVED.PRODUCT_PART_ID
+                            ANd LAST2_MON_DERIVED.effective_date = ADD_MONTHS ( TRUNC (SELLIN.effective_date, 'MM'),  -2)
+                            AND LAST2_MON_DERIVED.country_id=sellin.country_id
+                            Left OUTER JOIN (
+                                        SELECT product_part_id,
+                                               partner_id,
+                                               effective_Date,
+                                               country_id,
+                                               NVL (sell_in_revenue_local, 0)           sell_in_revenue_local_3,
+                                               NVL (sell_in_revenue_usd, 0)             sell_in_revenue_usd_3,
+                                               NVL (sell_out_revenue_local, 0)          sell_out_revenue_local_3,
+                                               NVL (sell_out_revenue_usd, 0)            sell_out_revenue_usd_3,
+                                               NVL (sell_in_invntry_revenue_local, 0)   sell_in_invntry_rev_local_3,
+                                               NVL (sell_in_invntry_revenue_usd, 0)     sell_in_invntry_rev_usd_3
+                                          FROM dmodw.DSI_DERIVED_METRIC_STG
+                                         ) LAST3_MON_DERIVED
+                            ON  SELLIN.PARTNER_ID = LAST3_MON_DERIVED.PARTNER_ID
+                            AND sellin.product_part_id = LAST3_MON_DERIVED.PRODUCT_PART_ID
+                            ANd LAST3_MON_DERIVED.effective_date = ADD_MONTHS ( TRUNC (SELLIN.effective_date, 'MM'),  -3)
+                            AND LAST3_MON_DERIVED.country_id=sellin.country_id) derived;
+
+
+    begin
+    DBMS_STATS.GATHER_TABLE_STATS ( ownname => 'DMODW', tabname => 'sell_out_md_stg_05', estimate_percent => .0001);
+    end;
+/
+
+    whenever sqlerror exit failure rollback;
+
+    truncate table dmodw.dsi_derived_metric_stg;
+
+	insert into dmodw.dsi_derived_metric_stg (
+		product_part_id, country_id,
+		effective_date, md_partner_id, partner_id,
+		reseller_partner_id, sell_in_revenue_local,
+		sell_in_revenue_usd, sell_in_days_of_stock,
+		sell_out_revenue_local, sell_out_revenue_usd,
+		sell_in_invntry_revenue_local, sell_in_invntry_revenue_usd)
+	select product_part_id, country_id,
+		effective_date, md_partner_id, partner_id,
+		reseller_partner_id, sell_in_revenue_local,
+		sell_in_revenue_usd, sell_in_days_of_stock,
+		sell_out_revenue_local, sell_out_revenue_usd,
+		sell_in_invntry_revenue_local, sell_in_invntry_revenue_usd from dmodw.sell_out_md_stg_05;
+
+	COMMIT;
+
+exit
+/
+!EOF
+
+}
+
+pop_drvd_fact_merge()
+{
+
+    runsqlplus<<!EOF
+
+    set time on
+    set timing on
+    set echo on
+    set lines 132
+    set serveroutput on
+
+    whenever oserror exit failure;
+    whenever sqlerror exit failure rollback;
+
+	merge into DMODM.DMO_SELL_IN_OUT_METRICS_DRVD_F base
+    using (
+            select * from dmodw.dsi_derived_metric_stg
+          ) temp
+    on
+    (
+        temp.product_part_id=base.product_part_id and
+        temp.md_partner_id = base.md_partner_id and
+        temp.reseller_partner_id = base.reseller_partner_id and
+        trunc(temp.effective_date,'MM')=trunc(base.effective_date,'MM')
+    )
+    WHEN MATCHED THEN
+    UPDATE SET
+            BASE.sell_in_days_of_stock=TEMP.sell_in_days_of_stock,
+            BASE.modification_user       = '$BATCH_ID',
+            BASE.modification_datetime   = sysdate;
+
+	COMMIT;
+
+exit
+/
+!EOF
+
+}
+#---------------------------------------------------------------------------------------------------------
+#++RFC:1182291
+#---------------------------------------------------------------------------------------------------------
+pop_drvd_fact_daily_metric()
+{
+    runsqlplus<<!EOF
+    set echo on
+    whenever sqlerror exit failure rollback;
+
+    EXEC dmodw.derived_metric_calc_prc('D');
+
+    commit;
+
+exit
+/
+!EOF
+}
+#--RFC:1182291
+#---------------------------------------------------------------------------------------------------------
+pop_drvd_fact_except_metric()
+{
+    runsqlplus<<!EOF
+    set echo on
+    whenever sqlerror exit failure rollback;
+
+    EXEC dmodw.derived_metric_calc_prc('E');
+
+    commit;
+
+exit
+/
+!EOF
+}
+
+#---------------------------------------------------------------------------------------------------------
+pop_drvd_fact_reject_data()
+{
+
+    runsqlplus<<!EOF
+
+    set time on
+    set timing on
+    set echo on
+    set lines 132
+    set serveroutput on
+
+    whenever oserror exit failure;
+    whenever sqlerror exit failure rollback;
+   -------------------------------------------------------------------------------------------------------
+   --INSERT_REJECT_DATA
+   -------------------------------------------------------------------------------------------------------
+
+delete from dmodm.dmo_sell_out_reject_f where file_name in (select distinct file_name from dmodw.sell_out_md_stg_02 where TRUNC(LOAD_DATE) = TRUNC(SYSDATE));
+
+insert into dmodm.dmo_sell_out_reject_f
+(
+    REJECT_SEQ_ID            ,INVOICE_NUMBER       ,INVOICE_DATE      ,RESELLER_VAT_ID,
+    RESELLER_ADDRESS         ,RESELLER_COUNTRY     ,RESELLER_CITY     ,RESELLER_STATE,
+    RESELLER_ZIPCODE         ,RESELLER_NAME        ,RESELLER_TELEPHONE,MFR_PART_NUMBER,
+    PROUDUCT_DESCRIPTION     ,QUANTITY_SHIPPED     ,UNIT_PRICE        ,AMOUNT_SUM     ,CURRENCY_CODE,
+    MARKETING_CONFIGURATION  ,SERIAL_NUMBER        ,TRANSACTION_TYPE  ,REJECT_REASON,
+    LOAD_DATE                ,FILE_SEQ             ,FILE_NAME         ,ORIGINAL_TRANSACTION_ID,
+    ORIGINAL_TRANSACTION_DATE,PARTNER_EXCEPTION_ID ,PRODUCT_EXCEPTION_ID
+)
+SELECT
+    DMODM.DMO_SELL_OUT_REJECT_SEQ.NEXTVAL, MD_INVOICE_NUMBER, TO_DATE (INVOICE_DATE,'DD/MM/RRRR')INVOICE_DATE,	VAT_ID,
+    ADDRESS                              ,COUNTRY_CODE                           ,CITY            						,STATE,
+    ZIPCODE                              ,CUSTOMER_NAME                           ,PHONE_NUMBER    						,PRODUCT_PART_ID,
+    PRODUCT_PART_DESCRIPTION             ,TO_NUMBER(QUANTITY_SHIPPED) QUANTITY_SHIPPED 				                    , TO_NUMBER(regexp_replace(regexp_replace(UNIT_PRICE, '[[:space:]]', ''),',','') )UNIT_PRICE  ,
+    Null,
+	org_CURRENCYCODE                    ,MARKETING_CONFIGURATION                                                        ,SERIAL_NUMBER,
+	TRANSACTION_TYPE                    ,REJECT_REASON_LEVEL_1                                                          ,LOAD_DATE,
+     FILE_SEQ                           ,FILE_NAME                                                                      ,ORIGINAL_TRANSACTION_ID,
+    TO_DATE (ORIGINAL_TRANSACTION_DATE, 'DD/MM/RRRR')ORIGINAL_TRANSACTION_DATE                                          ,NULL             ,NULL
+FROM  dmodw.sell_out_md_stg_02
+WHERE REJECT_REASON_LEVEL_1 IS NOT NULL
+AND TRUNC(LOAD_DATE) = TRUNC(SYSDATE);
+
+commit;
+
+/*
+   -------------------------------------------------------------------------------------------------------
+   --INSERT_PARTNER_EXCEPTION_DATA
+   -------------------------------------------------------------------------------------------------------
+	delete from dmodm.dmo_sell_out_reject_f where file_name in (
+	select distinct file_name from dmodw.dmo_sellout_metrics_base_intrm
+    where partner_exception_seqid is not null
+    and   partner_exp_correction_flag='N');
+
+    insert into dmodm.dmo_sell_out_reject_f
+    (
+        REJECT_SEQ_ID            ,INVOICE_NUMBER  ,INVOICE_DATE      ,RESELLER_VAT_ID,
+        RESELLER_ADDRESS         ,RESELLER_COUNTRY, RESELLER_CITY    ,RESELLER_STATE,
+        RESELLER_ZIPCODE         ,RESELLER_NAME   ,RESELLER_TELEPHONE,MFR_PART_NUMBER,
+        PROUDUCT_DESCRIPTION     ,QUANTITY_SHIPPED,UNIT_PRICE        ,AMOUNT_SUM     ,CURRENCY_CODE,
+        MARKETING_CONFIGURATION  ,SERIAL_NUMBER   , TRANSACTION_TYPE ,REJECT_REASON,
+        LOAD_DATE                ,FILE_SEQ        ,FILE_NAME         ,ORIGINAL_TRANSACTION_ID,
+        ORIGINAL_TRANSACTION_DATE,EXCEPTION_ID)
+    SELECT
+        DMODM.DMO_SELL_OUT_REJECT_SEQ.NEXTVAL,MD_INVOICE_NUMBER    ,INVOICE_DATE      ,VAT_ID,
+        ADDRESS                              ,COUNTRY_CODE         ,CITY              ,STATE,
+        ZIPCODE                              ,CUSTOMER_NAME        ,PHONE_NUMBER      ,PRODUCT_PART_ID,
+        PRODUCT_PART_DESCRIPTION             ,
+		case when TRANSACTION_TYPE=380
+		 then QUANTITY_SHIPPED_SUM
+		 else QUANTITY_SHIPPED_RETURN end as QUANTITY_SHIPPED,
+		UNIT_PRICE_NUM    ,AMOUNT_SUM        ,     ORG_CURRENCYCODE,
+        MARKETING_CONFIGURATION              ,SERIAL_NUMBER        ,TRANSACTION_TYPE  ,REJECT_REASON_LEVEL_3||','||REJECT_REASON_LEVEL_4,
+        LOAD_DATE                            ,FILE_SEQ             ,FILE_NAME         ,ORIGINAL_TRANSACTION_ID,
+        ORIGINAL_TRANSACTION_DATE            ,PARTNER_EXCEPTION_SEQID
+    FROM  DMODW.DMO_SELLOUT_METRICS_BASE_INTRM
+    where partner_exception_seqid is not null
+    and   partner_exp_correction_flag='N' ;
+
+   -------------------------------------------------------------------------------------------------------
+   --INSERT_PRODUCT_EXCEPTION_DATA
+   -------------------------------------------------------------------------------------------------------
+	delete from dmodm.dmo_sell_out_reject_f where file_name in (
+	select distinct file_name from dmodw.dmo_sellout_metrics_base_intrm
+    where product_exception_seqid is not null
+    and   product_exp_correction_flag='N');
+
+    insert into dmodm.dmo_sell_out_reject_f
+    (
+        REJECT_SEQ_ID            ,INVOICE_NUMBER  ,INVOICE_DATE      ,RESELLER_VAT_ID,
+        RESELLER_ADDRESS         ,RESELLER_COUNTRY, RESELLER_CITY    ,RESELLER_STATE,
+        RESELLER_ZIPCODE         ,RESELLER_NAME   ,RESELLER_TELEPHONE,MFR_PART_NUMBER,
+        PROUDUCT_DESCRIPTION     ,QUANTITY_SHIPPED,UNIT_PRICE        ,AMOUNT_SUM,         CURRENCY_CODE,
+        MARKETING_CONFIGURATION  ,SERIAL_NUMBER   , TRANSACTION_TYPE ,REJECT_REASON,
+        LOAD_DATE                ,FILE_SEQ        ,FILE_NAME         ,ORIGINAL_TRANSACTION_ID,
+        ORIGINAL_TRANSACTION_DATE,EXCEPTION_ID)
+    SELECT
+        DMODM.DMO_SELL_OUT_REJECT_SEQ.NEXTVAL,MD_INVOICE_NUMBER    ,INVOICE_DATE          ,VAT_ID,
+        ADDRESS                              ,COUNTRY_CODE         ,CITY                  ,STATE,
+        ZIPCODE                              ,CUSTOMER_NAME        ,PHONE_NUMBER          ,PRODUCT_PART_ID,
+        PRODUCT_PART_DESCRIPTION             ,
+		case when TRANSACTION_TYPE=380
+		 then QUANTITY_SHIPPED_SUM
+		 else QUANTITY_SHIPPED_RETURN end as QUANTITY_SHIPPED,
+		UNIT_PRICE_NUM        ,AMOUNT_SUM     ,ORG_CURRENCYCODE,
+        MARKETING_CONFIGURATION              ,SERIAL_NUMBER        ,TRANSACTION_TYPE      ,REJECT_REASON_LEVEL_3||','||REJECT_REASON_LEVEL_4,
+        LOAD_DATE                            ,FILE_SEQ             ,FILE_NAME             ,ORIGINAL_TRANSACTION_ID,
+        ORIGINAL_TRANSACTION_DATE            ,PRODUCT_EXCEPTION_SEQID
+    FROM  DMODW.DMO_SELLOUT_METRICS_BASE_INTRM
+    where product_exception_seqid is not null
+    and   product_exp_correction_flag='N';
+
+	COMMIT;
+	*/
+
+delete from dmodm.dmo_sell_out_reject_f
+where file_name in   (
+	        select distinct file_name
+	        from   dmodw.dmo_sellout_metrics_base_intrm
+            where (
+	               (partner_exception_seqid is not null and partner_exp_correction_flag='N')  or
+	               (product_exception_seqid is not null and  product_exp_correction_flag='N')
+		          )
+		             );
+
+commit;
+
+insert into dmodm.dmo_sell_out_reject_f
+    (
+        REJECT_SEQ_ID            ,INVOICE_NUMBER      ,INVOICE_DATE      ,RESELLER_VAT_ID,
+        RESELLER_ADDRESS         ,RESELLER_COUNTRY    , RESELLER_CITY    ,RESELLER_STATE,
+        RESELLER_ZIPCODE         ,RESELLER_NAME       ,RESELLER_TELEPHONE,MFR_PART_NUMBER,
+        PROUDUCT_DESCRIPTION     ,QUANTITY_SHIPPED    ,UNIT_PRICE        ,AMOUNT_SUM,         CURRENCY_CODE,
+        MARKETING_CONFIGURATION  ,SERIAL_NUMBER       , TRANSACTION_TYPE ,REJECT_REASON,
+        LOAD_DATE                ,FILE_SEQ            ,FILE_NAME         ,ORIGINAL_TRANSACTION_ID,
+        ORIGINAL_TRANSACTION_DATE,PARTNER_EXCEPTION_ID,PRODUCT_EXCEPTION_ID
+	)
+     SELECT DMODM.DMO_SELL_OUT_REJECT_SEQ.NEXTVAL, md_invoice_number,
+          TO_DATE (invoice_date, 'DD/MM/RRRR') invoice_date, vat_id, address,
+          country_code, city, state, zipcode, customer_name, phone_number,
+          product_part_id, product_part_description,
+          CASE
+             WHEN transaction_type = 380
+                THEN quantity_shipped_sum
+             ELSE quantity_shipped_return
+          END AS quantity_shipped,
+          TO_NUMBER
+             (REGEXP_REPLACE (REGEXP_REPLACE (unit_price_num,  '[[:space:]]', ''),',','' )) unit_price_num,
+          amount_sum, org_currencycode, marketing_configuration,
+          serial_number, transaction_type,
+          CASE
+             WHEN partner_exception_seqid IS NOT NULL
+             AND partner_exp_correction_flag = 'N'
+             AND product_exception_seqid IS NOT NULL
+             AND product_exp_correction_flag = 'N'
+                THEN reject_reason_level_3 || ',' || reject_reason_level_4
+             WHEN partner_exception_seqid IS NOT NULL
+             AND partner_exp_correction_flag = 'N'
+                THEN reject_reason_level_3
+             WHEN product_exception_seqid IS NOT NULL
+             AND product_exp_correction_flag = 'N'
+                THEN reject_reason_level_4
+             ELSE NULL
+          END reject_reason,
+          load_date, file_seq, file_name, original_transaction_id,
+         TO_DATE (original_transaction_date, 'DD/MM/RRRR')  original_transaction_date,
+          CASE
+             WHEN partner_exception_seqid IS NOT NULL
+             AND partner_exp_correction_flag = 'N'
+                THEN partner_exception_seqid
+             ELSE NULL
+          END partner_exception_seqid,
+          CASE
+             WHEN product_exception_seqid IS NOT NULL
+             AND product_exp_correction_flag = 'N'
+                THEN product_exception_seqid
+             ELSE NULL
+          END product_exception_seqid
+     FROM dmodw.dmo_sellout_metrics_base_intrm
+    WHERE (   (    partner_exception_seqid IS NOT NULL
+               AND partner_exp_correction_flag = 'N'
+              )
+           OR (    product_exception_seqid IS NOT NULL
+               AND product_exp_correction_flag = 'N'
+              )
+          );
+
+commit;
+
+exit
+/
+!EOF
+}
+
+#---------------------------------------------------------------------------------------------------------
+
+rejection_summary()
+{
+    runsqlplus<<!EOF
+
+    set time on
+    set timing on
+    set echo on
+
+    whenever sqlerror continue;
+
+    drop table sell_out_md_reject_summary;
+
+    whenever sqlerror exit failure rollback;
+
+   -------------------------------------------------------------------------------------------------------
+   -- report on files processed, records processed and number of rejects
+   -------------------------------------------------------------------------------------------------------
+
+   create table sell_out_md_reject_summary
+   as
+     select
+           t1.file_name                                                            as file_name,
+           t1.file_originator                                                      as file_originator,
+           sum(case when t1.file_name is null then 0 else 1 end)                   as count_transactions,
+           sum(case when t1.reject_reason_level_1 is null then 0 else 1 end)       as count_fileformat_rejects,
+           sum(case when t2.reject_reason_level_3 is null then 0 else 1 end)       as count_partner_exception,
+           sum(case when t2.reject_reason_level_4 is null then 0 else 1 end)       as count_product_exception,
+           sum(case when t1.reject_reason_level_1 is null then 0 else 1 end)       as count_rejected_transactions
+     from dmodw.sell_out_md_stg_04 t2,
+          (select * from dmodw.sell_out_md_stg_02 where trunc(load_date) = trunc(sysdate)) t1
+    where t1.record_number = t2.record_number(+)
+          group by t1.file_name,t1.file_originator ;
+
+   create unique index sell_out_md_reject_summary_ix on sell_out_md_reject_summary(file_name);
+
+   begin
+   DBMS_STATS.GATHER_TABLE_STATS ( ownname => user, tabname => 'sell_out_md_reject_summary', estimate_percent => .0001);
+   end;
+/
+
+
+exit
+/
+!EOF
+}
+
+#---------------------------------------------------------------------------------------------------------
+generate_post_processing_md ()
+{
+    spoolsqlplus<<!EOF
+    set pages 0
+    set feedback off
+    whenever sqlerror exit failure;
+    set lines 2000
+
+    -- generate statements to extract rejected rows to ERROR files
+    select
+    '$BATCH_UTILITY_DIR/dosqlcsv '
+    || '"' ||
+    'select ' ||
+    'md_invoice_number,invoice_date,vat_id,ADDRESS,COUNTRY_CODE,CITY,STATE,ZIPCODE,customer_name,phone_number, ' ||
+    'product_part_id,product_part_description,quantity_shipped,unit_price,org_currencycode,marketing_configuration, ' ||
+    'serial_number,transaction_type,original_transaction_id,original_transaction_date, ' ||
+    'reject_reason_level_1 as reject_reason from dmodw.sell_out_md_stg_02 ' ||
+    'where reject_reason_level_1 is not null and trunc(load_date) = trunc(sysdate) and file_name = ' || '''' || file_name || ''''
+    || '"' ||
+    ' > $BATCH_PARTNER_DIR/' || file_originator || '/ERROR/' || replace(file_name,'.csv','') || '.err'
+    from sell_out_md_reject_summary where count_rejected_transactions > 0 ;
+
+    -- generate statements to remove copied data files from $BATCH_WORK_SUBDIR
+    select 'rm ${BATCH_WORK_SUBDIR}/' || location ||  '>/dev/null 2>' || '&' || '1' from all_external_locations where table_name = 'SELL_OUT_MD_EXT';
+
+	-- Incident Move statement modified to capture errors if any, so that the process wont fail if file is missing.
+    -- generate statements to move the original data file from the INPUT directory to $BATCH_ARCHIVE_DIR
+    select
+        'mv ${BATCH_PARTNER_DIR}/' || T1.file_originator || '/INPUT/' || T2.location ||
+        ' ${BATCH_ARCHIVE_DIR}/ >/dev/null 2>' || '&' || '1'
+    FROM
+        (select distinct file_originator,
+                substr( file_name, (instr(file_name,'_') +1 ),  (instr(file_name,'_Sellout') -12) ) as md_vat_id
+           from sell_out_md_reject_summary ) T1,
+        (select location,
+                substr( location, (instr(location,'_') +1 ),  (instr(location,'_Sellout') -12) )    as md_vat_id
+           from all_external_locations where table_name = 'SELL_OUT_MD_EXT' ) T2
+    where T1.md_vat_id = T2.md_vat_id ;
+
+    -- generate statements to move the feedbal file from the INPUT directory to $BATCH_ARCHIVE_DIR
+    select replace (
+        'mv ${BATCH_PARTNER_DIR}/' || T1.file_originator || '/INPUT/' || T2.location ||
+        ' ${BATCH_ARCHIVE_DIR}/ >/dev/null 2>' || '&' || '1' , 'Sellout.csv', 'Sellout_feedbal.csv')
+    FROM
+        (select distinct file_originator,
+                substr( file_name, (instr(file_name,'_') +1 ),  (instr(file_name,'_Sellout') -12) ) as md_vat_id
+           from sell_out_md_reject_summary ) T1,
+        (select location,
+                substr( location, (instr(location,'_') +1 ),  (instr(location,'_Sellout') -12) )    as md_vat_id
+           from all_external_locations where table_name = 'SELL_OUT_MD_EXT' ) T2
+    where T1.md_vat_id = T2.md_vat_id ;
+
+exit
+/
+!EOF
+}
+
+#---------------------------------------------------------------------------------------------------------
+update_file_track()
+{
+    runsqlplus<<!EOF
+    set echo on
+    whenever sqlerror exit failure rollback;
+
+    ------------------------------------------------------------------------------------------------------
+    -- Update FILE_TRACK table
+    ------------------------------------------------------------------------------------------------------
+
+    update
+      (
+       select
+             o.FIL_N_RECORDS_PROCESSED         o_FIL_N_RECORDS_PROCESSED,
+             o.FIL_N_RECORDS_REJECTED          o_FIL_N_RECORDS_REJECTED,
+             o.FIL_C_STATUS                    o_FIL_C_STATUS,
+             o.FIL_C_MODIFICATION_USER         o_FIL_C_MODIFICATION_USER,
+             o.FIL_D_MODIFICATION_DATE_TIME    o_FIL_D_MODIFICATION_DATE_TIME,
+             n.count_transactions              n_count_transactions,
+             n.count_rejected_transactions     n_count_rejected_transactions
+       from
+             dmodw.file_track o,
+             sell_out_md_reject_summary n
+       where
+             o.FIL_V_FILE_NAME = n.file_name
+      )
+    set  o_FIL_N_RECORDS_PROCESSED      =  n_count_transactions,
+         o_FIL_N_RECORDS_REJECTED       =  n_count_rejected_transactions,
+         o_FIL_C_STATUS                 =  'PS',
+         o_FIL_C_MODIFICATION_USER      =  '$BATCH_ID',
+         o_FIL_D_MODIFICATION_DATE_TIME =  sysdate ;
+
+    ------------------------------------------------------------------------------------------------------
+    -- Update last batch run date
+    ------------------------------------------------------------------------------------------------------
+
+    EXEC newbatch.SetLastRunDateForBatch('$BATCH_ID');
+
+    ------------------------------------------------------------------------------------------------------
+    -- Update ISRVETOOLS.GUI_REPORTS table for REPORT_AVAIL_DT, REPORT_AVAIL_DT_ADMIN and MIN_DATA_DATE
+    -- For all DMO reports with REPORT_SUB_GROUP is DMO PPM SELL-OUT and DMO PPM SUMMARY
+    ------------------------------------------------------------------------------------------------------
+
+    EXEC MPSDM.UPDATE_REPORTING_LOAD_DATES (2288) ;
+
+    EXEC MPSDM.UPDATE_REPORTING_LOAD_DATES (2268) ;
+
+    commit;
+
+exit
+/
+!EOF
+}
+
+execute_vw_refresh_prc()
+{
+
+ runsqlplus<<!EOF
+
+    ------------------------------------------------------------------------------------------------------------------------
+    --  Refresh VW tables after the facts are loaded.
+    ------------------------------------------------------------------------------------------------------------------------
+
+    set time on
+    set timing on
+    set echo on
+    set lines 132
+    set serveroutput on
+
+    whenever sqlerror exit failure rollback;
+
+    EXEC dmodw.dmo_vectorwise_mig_prc('F');
+
+    commit;
+
+exit
+/
+!EOF
+}
+
+##------------------------ MAIN ----------------------------------------------------------------------------------------------
+##----------------------------------------------------------------------------------------------------------------------------
+
+trap 'rm -f ${tmp_file_stem}* >/dev/null 2>&1' 0
+trap "exit 2" 1 2 3 13 15
+
+this_script=$( basename $0 )
+tmp_file_stem="${BATCH_TMP_DIR}/${this_script}_$(date +"%Y%m%d%H%M%S")_$$"
+
+public_functions=""
+
+##word_in_list "$1" "$public_functions" || abort "function $1 is not callable as a public function"
+
+$*
+
+exit $?
