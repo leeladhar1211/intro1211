@@ -1,3 +1,48 @@
+performace tips for larger datasets
+-------------------------------------------
+Use small data types
+Delete objects from memory
+Do joins chunk by chunk
+Use vectorized numpy functions when possible
+Parallel apply with swifter
+Parallel dataframe processing with multiprocessing
+Do joins chunk by chunk
+Perform large, complex joins in parts to avoid exploding memory usage:
+
+# split dataframe indices into parts
+indexes = np.linspace(0, len(second_df), num=10, dtype=np.int32)
+
+# update in small portions
+for i in range(len(indexes)-1):
+    my_df = pd.concat(
+        [
+            my_df, # the same DF
+            pd.merge(left=pd.merge(
+                            left=second_df.loc[indexes[i]:indexes[i+1], :],
+                            right=third_df,
+                            how='left',
+                            on='foreign_key'
+                            ),
+                     right=fourth_df, 
+                     how='left', 
+                     on='other_foreign_key'
+                )
+        ]
+    )
+    
+ Use vectorized numpy functions when possible
+For example, use DataFrame.apply instead of Series.map to create derived columns and/or to operate on columns:
+
+Time comparison: create a dataframe with 10,000,000 rows and multiply a numeric column by 2
+
+import pandas as pd
+import numpy as np
+
+# create a sample dataframe with 10,000,000 rows
+df = pd.DataFrame({
+    'x': np.random.normal(loc=0.0, scale=1.0, size=10000000)
+})
+------------------------------------------------------------------------------------------------------------------------------    
 Company Name ***************
 
 Round 1 :
